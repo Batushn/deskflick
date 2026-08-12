@@ -25,6 +25,8 @@ tap is passed through untouched, so *back* still works in your browser.
 - 🪟 **Tap, double tap and press-and-hold are each bindable** — to the
   button's original action, *Present Windows*, any KWin shortcut, or a shell
   command
+- 🪄 **Meta + flick moves the window** — optional: hold Meta with the trigger
+  and flick to snap the focused window that way, like Meta + arrow keys
 - 🎮 **Handles gaming mice** — buttons that send keyboard macros from an
   onboard profile live on a second HID interface; deskflick grabs those too,
   so the macro no longer leaks through while you gesture
@@ -84,7 +86,20 @@ down  = "Switch One Desktop Down"
 
 [overview]
 shortcut = "ExposeAll"    # used when tap = "overview"
+
+[modifier]                # hold Meta too -> act on the window, not the desktop
+enabled = false
+key = "KEY_LEFTMETA"
+left = "Window Quick Tile Left"
+right = "Window Quick Tile Right"
+up = "Window Quick Tile Top"
+down = "Window Quick Tile Bottom"
 ```
+
+With `[modifier]` on, deskflick watches one key's state on your keyboards
+(read-only, never grabbed, and only that key). That needs `input` group
+membership, which takes effect after one logout; until then it says so in the
+log and simply stays inactive.
 
 List all bindable KWin shortcut names:
 

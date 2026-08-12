@@ -67,3 +67,23 @@ down  = "Switch One Desktop Down"
 # (All desktops), the Ctrl+F10 effect; other ideas: "Overview", or "Expose"
 # for the current desktop only.
 shortcut = "ExposeAll"
+
+[modifier]
+# Hold this key as well as the trigger button, and flicks act on the focused
+# window instead of switching desktops — the Meta + arrow keys behaviour.
+# Reading the keyboard's modifier state needs `input` group membership, so log
+# out and back in once after installing. Nothing but this one key's state is
+# ever looked at, and keyboards are not opened at all while this is false.
+enabled = false
+key = "KEY_LEFTMETA"     # or KEY_LEFTCTRL / KEY_LEFTALT / KEY_LEFTSHIFT
+                         # the right-hand twin of the key counts too
+
+left  = "Window Quick Tile Left"
+right = "Window Quick Tile Right"
+up    = "Window Quick Tile Top"
+down  = "Window Quick Tile Bottom"
+
+# KWin opens the application launcher when Meta is released on its own, and
+# deskflick swallows the button that would normally prevent that. This taps
+# Ctrl (which does nothing by itself) to mark the modifier as used.
+defuse_launcher = true

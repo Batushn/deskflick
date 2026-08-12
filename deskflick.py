@@ -63,6 +63,23 @@ DEFAULT_CONFIG = {
     "overview": {
         "shortcut": "ExposeAll",
     },
+    "modifier": {
+        "enabled": False,
+        "key": "KEY_LEFTMETA",
+        "left": "Window Quick Tile Left",
+        "right": "Window Quick Tile Right",
+        "up": "Window Quick Tile Top",
+        "down": "Window Quick Tile Bottom",
+        "defuse_launcher": True,
+    },
+}
+
+# Left/right halves of the same modifier are always watched together.
+MODIFIER_SIBLINGS = {
+    "KEY_LEFTMETA": "KEY_RIGHTMETA", "KEY_RIGHTMETA": "KEY_LEFTMETA",
+    "KEY_LEFTCTRL": "KEY_RIGHTCTRL", "KEY_RIGHTCTRL": "KEY_LEFTCTRL",
+    "KEY_LEFTALT": "KEY_RIGHTALT", "KEY_RIGHTALT": "KEY_LEFTALT",
+    "KEY_LEFTSHIFT": "KEY_RIGHTSHIFT", "KEY_RIGHTSHIFT": "KEY_LEFTSHIFT",
 }
 
 
@@ -139,6 +156,20 @@ class Config:
         }
         self.overview_shortcut = str(get("overview", "shortcut"))
 
+        self.mod_enabled = bool(get("modifier", "enabled"))
+        mod_name = str(get("modifier", "key")).upper()
+        mod_code = key_code(mod_name)
+        if mod_code is None:
+            sys.exit(f"deskflick: unknown modifier key: {mod_name!r}")
+        self.mod_name = mod_name
+        sibling = key_code(MODIFIER_SIBLINGS.get(mod_name, ""))
+        self.mod_codes = {mod_code} | ({sibling} if sibling else set())
+        self.mod_actions = {
+            d: data.get("modifier", {}).get(d, DEFAULT_CONFIG["modifier"][d])
+            for d in ("left", "right", "up", "down")
+        }
+        self.mod_defuse = bool(get("modifier", "defuse_launcher"))
+
     def resolve(self, action: str) -> str | None:
         """Config value -> shortcut/command, or None for 'do nothing'."""
         if not action or action == "none":
@@ -175,6 +206,102 @@ async def run_action(action: str, verbose: bool):
             stderr=asyncio.subprocess.DEVNULL,
         )
     await proc.wait()
+
+
+# ---------------------------------------------------------------- modifier
+
+
+class ModifierWatcher:
+    """Tells whether a modifier is held, without grabbing the keyboard.
+
+    Keyboards are opened read-only and only ever queried for the state of the
+    one modifier deskflick was told to watch (EVIOCGKEY), never read as a
+    stream. Nothing else about your typing is looked at, and nothing is opened
+    at all unless [modifier] is enabled.
+    """
+
+    def __init__(self, cfg: Config):
+        self.codes = cfg.mod_codes
+        self.devices: list[InputDevice] = []
+        self.readable = False
+
+    def refresh(self):
+        for dev in self.devices:
+            try:
+                dev.close()
+            except OSError:
+                pass
+        self.devices = []
+        blocked = False
+        for path in list_devices():
+            try:
+                dev = InputDevice(path)
+            except OSError:
+                blocked = True
+                continue
+            if VIRTUAL_SUFFIX in dev.name or "deskflick" in dev.name:
+                dev.close()
+                continue
+            if self.codes & set(dev.capabilities().get(ecodes.EV_KEY, [])):
+                self.devices.append(dev)
+            else:
+                dev.close()
+        self.readable = bool(self.devices)
+        return blocked
+
+    def held(self) -> bool:
+        for dev in self.devices:
+            try:
+                if self.codes & set(dev.active_keys()):
+                    return True
+            except OSError:
+                continue
+        return False
+
+    def close(self):
+        for dev in self.devices:
+            try:
+                dev.close()
+            except OSError:
+                pass
+        self.devices = []
+
+
+class LauncherDefuser:
+    """Keeps a bare Meta press from opening the application launcher.
+
+    KWin opens the launcher when Meta is released without anything else being
+    pressed -- and deskflick swallows the very button that would otherwise
+    count. Tapping Ctrl through a virtual keyboard marks the modifier as used;
+    Ctrl on its own does nothing.
+    """
+
+    def __init__(self):
+        self.ui = None
+        try:
+            self.ui = UInput({ecodes.EV_KEY: [ecodes.KEY_LEFTCTRL]},
+                             name="deskflick-modifier")
+        except OSError as e:
+            log(f"deskflick: no launcher defuser ({e})")
+
+    def tap(self):
+        if not self.ui:
+            return
+        try:
+            self.ui.write(ecodes.EV_KEY, ecodes.KEY_LEFTCTRL, 1)
+            self.ui.syn()
+            self.ui.write(ecodes.EV_KEY, ecodes.KEY_LEFTCTRL, 0)
+            self.ui.syn()
+        except OSError:
+            pass
+
+    def close(self):
+        if self.ui:
+            try:
+                self.ui.close()
+            except OSError:
+                pass
+            self.ui = None
 
 
 # ---------------------------------------------------------------- state
@@ -268,12 +395,16 @@ class DeviceWorker:
     """Grabs one device and proxies its events through a uinput clone."""
 
     def __init__(self, dev: InputDevice, cfg: Config, gesture: Gesture,
-                 is_pointer: bool, verbose: bool):
+                 is_pointer: bool, verbose: bool,
+                 mods: "ModifierWatcher | None" = None,
+                 defuser: "LauncherDefuser | None" = None):
         self.dev = dev
         self.cfg = cfg
         self.g = gesture
         self.is_pointer = is_pointer
         self.verbose = verbose
+        self.mods = mods
+        self.defuser = defuser
         self.ui = UInput.from_device(dev, name=dev.name + VIRTUAL_SUFFIX)
         self.forwarded: set[int] = set()
 
@@ -304,10 +435,7 @@ class DeviceWorker:
                 if g.held and self.is_pointer and ev.type == ecodes.EV_REL:
                     direction = g.add_motion(ev.code, ev.value)
                     if direction:
-                        if self.verbose:
-                            log(f"[{dev.name}] flick {direction}")
-                        asyncio.ensure_future(
-                            run_action(cfg.actions[direction], self.verbose))
+                        self._flick(direction)
                     if ev.code in (ecodes.REL_X, ecodes.REL_Y) and cfg.lock_pointer:
                         continue
 
@@ -319,6 +447,18 @@ class DeviceWorker:
                 ui.write_event(ev)
         finally:
             self.shutdown()
+
+    def _flick(self, direction: str):
+        """Run the flick action, snapping the window if the modifier is held."""
+        cfg = self.cfg
+        with_mod = bool(cfg.mod_enabled and self.mods and self.mods.held())
+        action = (cfg.mod_actions if with_mod else cfg.actions)[direction]
+        if self.verbose:
+            log(f"[{self.dev.name}] flick {direction}"
+                f"{' + ' + cfg.mod_name if with_mod else ''}")
+        asyncio.ensure_future(run_action(action, self.verbose))
+        if with_mod and cfg.mod_defuse and self.defuser:
+            self.defuser.tap()
 
     async def _on_trigger(self, value: int):
         g, cfg = self.g, self.cfg
@@ -553,7 +693,23 @@ async def main_loop(cfg: Config, verbose: bool):
     workers: dict[str, asyncio.Task] = {}
     warned = False
 
+    mods = defuser = None
+    mod_warned = False
+    if cfg.mod_enabled:
+        mods = ModifierWatcher(cfg)
+        defuser = LauncherDefuser() if cfg.mod_defuse else None
+
     while True:
+        if mods is not None:
+            mods.refresh()
+            if not mods.readable and not mod_warned:
+                mod_warned = True
+                log(f"deskflick: cannot read any keyboard, so {cfg.mod_name} "
+                    f"gestures are inactive. Log out and back in once so your "
+                    f"`input` group membership takes effect.")
+            elif mods.readable:
+                mod_warned = False
+
         found = find_devices(cfg)
         has_trigger_dev = any(t for _, _, t in found.values())
 
@@ -572,7 +728,8 @@ async def main_loop(cfg: Config, verbose: bool):
             roles = ", ".join(r for r, on in
                               (("motion", pointer), ("trigger", trigger)) if on)
             log(f"deskflick: attached to {path} ({dev.name}) [{roles}]")
-            worker = DeviceWorker(dev, cfg, gesture, pointer, verbose)
+            worker = DeviceWorker(dev, cfg, gesture, pointer, verbose,
+                                  mods, defuser)
             workers[path] = asyncio.ensure_future(worker.run())
 
         for path, task in list(workers.items()):
@@ -687,7 +844,8 @@ def main():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, loop.stop)
     log(f"deskflick: trigger={cfg.button_name} threshold={cfg.threshold}px "
-        f"tap={cfg.tap} double={cfg.double} hold={cfg.hold}")
+        f"tap={cfg.tap} double={cfg.double} hold={cfg.hold}"
+        + (f" modifier={cfg.mod_name}" if cfg.mod_enabled else ""))
     loop.create_task(main_loop(cfg, args.verbose))
     try:
         loop.run_forever()

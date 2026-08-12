@@ -31,7 +31,19 @@ DEFAULTS = {
         "down": "Switch One Desktop Down",
     },
     "overview": {"shortcut": "ExposeAll"},
+    "modifier": {
+        "enabled": False, "key": "KEY_LEFTMETA", "defuse_launcher": True,
+        "left": "Window Quick Tile Left", "right": "Window Quick Tile Right",
+        "up": "Window Quick Tile Top", "down": "Window Quick Tile Bottom",
+    },
 }
+
+MODIFIER_KEYS = [
+    ("KEY_LEFTMETA", "Meta / Super"),
+    ("KEY_LEFTCTRL", "Ctrl"),
+    ("KEY_LEFTALT", "Alt"),
+    ("KEY_LEFTSHIFT", "Shift"),
+]
 
 BUTTON_CHOICES = [
     ("BTN_SIDE", "Button 4 — back (BTN_SIDE)"),
@@ -88,7 +100,7 @@ def toml_val(v) -> str:
 
 def dump_config(cfg: dict) -> str:
     lines = ["# deskflick configuration (written by deskflick-ui)", ""]
-    for section in ("trigger", "gesture", "actions", "overview"):
+    for section in ("trigger", "gesture", "actions", "overview", "modifier"):
         lines.append(f"[{section}]")
         for key, value in cfg[section].items():
             lines.append(f"{key} = {toml_val(value)}")
@@ -424,6 +436,47 @@ class Window(QtWidgets.QWidget):
             act_form.addRow(f"{arrow} {direction.capitalize()}:", combo)
         layout.addWidget(act_box)
 
+        # --- Modifier --------------------------------------------------
+        mod_box = QtWidgets.QGroupBox("With a modifier held")
+        mod_form = QtWidgets.QFormLayout(mod_box)
+
+        self.mod_enabled = QtWidgets.QCheckBox(
+            "Flicking while this key is held moves the window instead")
+        self.mod_enabled.setChecked(bool(self.cfg["modifier"]["enabled"]))
+        self.mod_enabled.setToolTip(
+            "Meta + trigger button + flick snaps the focused window, the way "
+            "Meta + arrow keys does.\n"
+            "Reading the keyboard's modifier state needs `input` group "
+            "membership — log out and back in once after installing.")
+        mod_form.addRow(self.mod_enabled)
+
+        self.mod_key = QtWidgets.QComboBox()
+        for code, label in MODIFIER_KEYS:
+            self.mod_key.addItem(label, code)
+        idx = self.mod_key.findData(str(self.cfg["modifier"]["key"]))
+        self.mod_key.setCurrentIndex(max(0, idx))
+        mod_form.addRow("Modifier:", self.mod_key)
+
+        self.mod_combos = {}
+        for direction, arrow in (("left", "←"), ("right", "→"),
+                                 ("up", "↑"), ("down", "↓")):
+            combo = QtWidgets.QComboBox()
+            combo.setEditable(True)
+            combo.addItems(shortcuts or [DEFAULTS["modifier"][direction]])
+            combo.setCurrentText(str(self.cfg["modifier"][direction]))
+            self.mod_combos[direction] = combo
+            mod_form.addRow(f"{arrow} {direction.capitalize()}:", combo)
+
+        self.mod_defuse = QtWidgets.QCheckBox(
+            "Keep a held Meta from opening the application launcher")
+        self.mod_defuse.setChecked(bool(self.cfg["modifier"]["defuse_launcher"]))
+        mod_form.addRow(self.mod_defuse)
+
+        for widget in (self.mod_key, self.mod_defuse, *self.mod_combos.values()):
+            self.mod_enabled.toggled.connect(widget.setEnabled)
+            widget.setEnabled(self.mod_enabled.isChecked())
+        layout.addWidget(mod_box)
+
         # --- Footer ----------------------------------------------------
         self.status = QtWidgets.QLabel()
         self.status.setWordWrap(True)
@@ -576,6 +629,11 @@ class Window(QtWidgets.QWidget):
         for direction, combo in self.action_combos.items():
             self.cfg["actions"][direction] = combo.currentText().strip()
         self.cfg["overview"]["shortcut"] = self.overview_shortcut.currentText().strip()
+        self.cfg["modifier"]["enabled"] = self.mod_enabled.isChecked()
+        self.cfg["modifier"]["key"] = self.mod_key.currentData()
+        self.cfg["modifier"]["defuse_launcher"] = self.mod_defuse.isChecked()
+        for direction, combo in self.mod_combos.items():
+            self.cfg["modifier"][direction] = combo.currentText().strip()
 
         os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
         with open(CONFIG_PATH, "w") as f:
