@@ -9,7 +9,7 @@ virtual desktops — or snap the window you're looking at.**
 [![Vibe coded with Claude](https://img.shields.io/badge/vibe%20coded%20with-Claude-8A62E8?style=flat-square)](#how-this-was-built)
 
 <p align="center">
-  <img src="docs/demo-desktops.gif" alt="Holding a mouse button and flicking to switch KDE virtual desktops" width="560">
+  <img src="docs/demo-desktops.gif" alt="Holding a mouse button and flicking to switch KDE virtual desktops" width="600">
 </p>
 
 Your mouse has a spare button — the "back" thumb button on most mice. deskflick
