@@ -120,6 +120,11 @@ deskflick --unstick           # rescue: release all mouse buttons
 journalctl --user -u deskflick -f
 ```
 
+- **The pointer hitches on a regular beat** — deskflick relays your mouse, so
+  anything that blocks it shows up as periodic stutter. Since 0.7.1 it only
+  enumerates devices when the set of device nodes actually changes, and does
+  it off the event loop. `systemctl --user stop deskflick` tells you in one
+  step whether deskflick is the cause at all.
 - **A click feels stuck** — run `deskflick --unstick`. Since 0.3.0 this
   shouldn't happen: deskflick refuses to grab a mouse while a button is
   held, always flushes releases through the clone before letting go, and

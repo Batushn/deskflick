@@ -241,6 +241,8 @@ class ModifierWatcher:
         self.readable = False
 
     def refresh(self):
+        """Reopen the watched keyboards. Costs ~100ms — call it only when the
+        set of device nodes actually changed, never on a timer."""
         for dev in self.devices:
             try:
                 dev.close()
@@ -737,45 +739,89 @@ async def main_loop(cfg: Config, verbose: bool):
         mods = ModifierWatcher(cfg)
         defuser = LauncherDefuser() if cfg.mod_defuse else None
 
+    known_paths: frozenset[str] = frozenset()
+    has_trigger_dev = False
+    idle_rounds = 0
+    # A device we cannot keep (already grabbed by another process, say) would
+    # otherwise die and be retried on every pass, and each retry pays for a
+    # full rescan. Back off instead.
+    failures: dict[str, int] = {}
+    retry_at: dict[str, float] = {}
+    started_at: dict[str, float] = {}
+
     while True:
-        if mods is not None:
-            mods.refresh()
-            if not mods.readable and not mod_warned:
-                mod_warned = True
-                log(f"deskflick: cannot read any keyboard, so {cfg.mod_name} "
-                    f"gestures are inactive. Log out and back in once so your "
-                    f"`input` group membership takes effect.")
-            elif mods.readable:
-                mod_warned = False
-
-        found = find_devices(cfg)
-        has_trigger_dev = any(t for _, _, t in found.values())
-
-        if not has_trigger_dev and not warned:
-            warned = True
-            log(f"deskflick: no readable device reports {cfg.button_name}. "
-                f"Run `deskflick --list-devices`; if your mouse is missing, "
-                f"its permissions are not set up (re-run install.sh).")
-        elif has_trigger_dev:
-            warned = False
-
-        for path, (dev, pointer, trigger) in found.items():
-            if path in workers and not workers[path].done():
-                dev.close()
-                continue
-            roles = ", ".join(r for r, on in
-                              (("motion", pointer), ("trigger", trigger)) if on)
-            log(f"deskflick: attached to {path} ({dev.name}) [{roles}]")
-            worker = DeviceWorker(dev, cfg, gesture, pointer, verbose,
-                                  mods, defuser)
-            workers[path] = asyncio.ensure_future(worker.run())
-
+        # Enumerating devices and reading their capabilities takes ~100ms, and
+        # this process is the only thing between the mouse and the compositor
+        # while it holds a grab -- so a periodic rescan would freeze the
+        # pointer on a timer. Detect changes with a cheap listing instead, and
+        # do the expensive part off the event loop.
+        now = time.monotonic()
+        paths = frozenset(list_devices())
         for path, task in list(workers.items()):
-            if task.done():
-                exc = task.exception()
-                if exc and not isinstance(exc, (OSError, asyncio.CancelledError)):
-                    log(f"deskflick: worker for {path} died: {exc!r}")
-                del workers[path]
+            if not task.done():
+                continue
+            del workers[path]
+            exc = task.exception()
+            if isinstance(exc, asyncio.CancelledError):
+                continue
+            if time.monotonic() - started_at.get(path, now) > 10:
+                failures.pop(path, None)  # it worked for a while; forgive it
+            count = failures[path] = failures.get(path, 0) + 1
+            retry_at[path] = now + min(60.0, 2.0 ** min(count, 6))
+            if count == 1 and exc is not None:
+                log(f"deskflick: lost {path}: {exc}")
+
+        rescan = paths != known_paths or any(
+            t <= now for p, t in retry_at.items()
+            if p in paths and p not in workers)
+        if not has_trigger_dev:
+            # Permissions can arrive without any device appearing (a udev ACL
+            # being applied), so keep looking, just not every two seconds.
+            idle_rounds += 1
+            rescan = rescan or idle_rounds % 5 == 0
+
+        if rescan:
+            known_paths = paths
+            found = await asyncio.to_thread(find_devices, cfg)
+            has_trigger_dev = any(t for _, _, t in found.values())
+            if has_trigger_dev:
+                idle_rounds = 0
+
+            if not has_trigger_dev and not warned:
+                warned = True
+                log(f"deskflick: no readable device reports {cfg.button_name}. "
+                    f"Run `deskflick --list-devices`; if your mouse is missing, "
+                    f"its permissions are not set up (re-run install.sh).")
+            elif has_trigger_dev:
+                warned = False
+
+            for path, (dev, pointer, trigger) in found.items():
+                if path in workers or retry_at.get(path, 0) > time.monotonic():
+                    dev.close()
+                    continue
+                roles = ", ".join(r for r, on in
+                                  (("motion", pointer), ("trigger", trigger)) if on)
+                log(f"deskflick: attached to {path} ({dev.name}) [{roles}]")
+                # Creating the uinput clone waits for its device node, which
+                # takes up to a second -- off the loop, or the pointer stalls.
+                worker = await asyncio.to_thread(
+                    DeviceWorker, dev, cfg, gesture, pointer, verbose,
+                    mods, defuser)
+                retry_at.pop(path, None)
+                started_at[path] = time.monotonic()
+                workers[path] = asyncio.ensure_future(worker.run())
+
+            if mods is not None:
+                await asyncio.to_thread(mods.refresh)
+                if not mods.readable and not mod_warned:
+                    mod_warned = True
+                    log(f"deskflick: cannot read any keyboard, so "
+                        f"{cfg.mod_name} gestures are inactive. Log out and "
+                        f"back in once so your `input` group membership takes "
+                        f"effect.")
+                elif mods.readable:
+                    mod_warned = False
+
         await asyncio.sleep(2)
 
 
