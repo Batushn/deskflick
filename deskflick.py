@@ -136,6 +136,10 @@ class DeviceWorker:
                 if ev.type == ecodes.EV_KEY and ev.code == cfg.button:
                     await self._on_trigger(ev.value)
                     continue
+                # safety: never stay in gesture mode longer than 10s, so a
+                # missed release event can't freeze the pointer forever
+                if self.held and time.monotonic() - self.press_time > 10:
+                    self.held = False
                 if self.held and ev.type == ecodes.EV_REL:
                     if ev.code == ecodes.REL_X:
                         self.acc_x += ev.value
@@ -320,6 +324,13 @@ def main():
     try:
         loop.run_forever()
     finally:
+        # cancel workers so their finally blocks ungrab devices cleanly
+        tasks = asyncio.all_tasks(loop)
+        for t in tasks:
+            t.cancel()
+        if tasks:
+            loop.run_until_complete(
+                asyncio.gather(*tasks, return_exceptions=True))
         loop.close()
 
 
