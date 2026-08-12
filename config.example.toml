@@ -10,12 +10,24 @@
 # honoured on the mouse itself, never on your real keyboard.
 button = "BTN_SIDE"
 
-# What a quick tap (press+release without moving) should do:
+# What each press pattern should do. Every one of these accepts:
 #   "passthrough" — replay the button's original action (click or macro)
-#   "overview"    — toggle the shortcut in [overview] below (show all windows)
-#   "none"        — nothing; the button belongs to deskflick alone
-tap = "passthrough"
+#   "overview"    — the shortcut set in [overview] below (show all windows)
+#   "none"        — nothing
+#   any KWin shortcut name, e.g. "Toggle Overview" or "Window Maximize"
+#   "cmd:<shell command>", e.g. "cmd:notify-send hi"
+tap = "passthrough"      # one quick press
+double = "none"          # two quick presses
+hold = "none"            # button kept down without flicking
+
+# A tap is only a tap if released within this long.
 tap_timeout_ms = 350
+# Second press must land within this to count as a double tap. While `double`
+# is "none" taps fire instantly; otherwise each tap waits out this window.
+double_ms = 250
+# How long the button must stay down before `hold` fires. Flicking afterwards
+# still switches desktops.
+hold_ms = 500
 
 [gesture]
 # How far (in mouse counts, ~pixels) you must push before a switch fires.

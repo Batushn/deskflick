@@ -17,7 +17,9 @@ from PySide6 import QtCore, QtWidgets
 CONFIG_PATH = os.path.expanduser("~/.config/deskflick/config.toml")
 
 DEFAULTS = {
-    "trigger": {"button": "BTN_SIDE", "tap": "passthrough", "tap_timeout_ms": 350},
+    "trigger": {"button": "BTN_SIDE", "tap": "passthrough", "double": "none",
+                "hold": "none", "tap_timeout_ms": 350, "double_ms": 250,
+                "hold_ms": 500},
     "gesture": {
         "threshold": 150, "repeat": True, "cooldown_ms": 180,
         "lock_pointer": True, "invert_x": False, "invert_y": False,
@@ -40,10 +42,12 @@ BUTTON_CHOICES = [
     ("BTN_TASK", "BTN_TASK"),
 ]
 
-TAP_CHOICES = [
-    ("passthrough", "Do its original thing (normal click / macro)"),
+# Offered at the top of every press-action box; anything else typed or picked
+# is passed to KWin as a shortcut name (or run as cmd:<command>).
+PRESET_ACTIONS = [
+    ("none", "— nothing —"),
+    ("passthrough", "Its original action (click / macro)"),
     ("overview", "Show all windows (Present Windows)"),
-    ("none", "Nothing — the button is deskflick's alone"),
 ]
 
 
@@ -326,20 +330,50 @@ class Window(QtWidgets.QWidget):
         self.trigger_note.setStyleSheet("color: palette(mid);")
         trig_form.addRow(self.trigger_note)
 
-        self.tap_combo = QtWidgets.QComboBox()
-        for code, label in TAP_CHOICES:
-            self.tap_combo.addItem(label, code)
-        idx = self.tap_combo.findData(str(self.cfg["trigger"]["tap"]))
-        self.tap_combo.setCurrentIndex(max(0, idx))
-        trig_form.addRow("A quick tap should:", self.tap_combo)
+        self.press_combos = {}
+        for key, label, tip in (
+            ("tap", "Tap:", "One quick press and release."),
+            ("double", "Double tap:", "Two quick presses. Leave on “nothing” "
+                                      "to keep taps instant — otherwise a tap "
+                                      "waits to see if a second one follows."),
+            ("hold", "Press and hold:",
+             "Fires while you keep the button down without flicking. "
+             "Flicking afterwards still switches desktops."),
+        ):
+            combo = self._action_combo(shortcuts, str(self.cfg["trigger"][key]))
+            combo.setToolTip(tip)
+            self.press_combos[key] = combo
+            trig_form.addRow(label, combo)
+
+        self.hold_ms = QtWidgets.QSpinBox()
+        self.hold_ms.setRange(150, 3000)
+        self.hold_ms.setSingleStep(50)
+        self.hold_ms.setSuffix(" ms")
+        self.hold_ms.setValue(int(self.cfg["trigger"]["hold_ms"]))
+        self.double_ms = QtWidgets.QSpinBox()
+        self.double_ms.setRange(100, 800)
+        self.double_ms.setSingleStep(25)
+        self.double_ms.setSuffix(" ms")
+        self.double_ms.setValue(int(self.cfg["trigger"]["double_ms"]))
+        timing = QtWidgets.QHBoxLayout()
+        timing.addWidget(QtWidgets.QLabel("hold after"))
+        timing.addWidget(self.hold_ms)
+        timing.addSpacing(12)
+        timing.addWidget(QtWidgets.QLabel("double within"))
+        timing.addWidget(self.double_ms)
+        timing.addStretch(1)
+        trig_form.addRow("Timing:", timing)
 
         self.overview_shortcut = QtWidgets.QComboBox()
         self.overview_shortcut.setEditable(True)
         self.overview_shortcut.addItems(shortcuts or ["ExposeAll", "Overview"])
         self.overview_shortcut.setCurrentText(str(self.cfg["overview"]["shortcut"]))
-        self.tap_combo.currentIndexChanged.connect(self._sync_tap)
-        trig_form.addRow("Tap shortcut:", self.overview_shortcut)
-        self._sync_tap()
+        self.overview_shortcut.setToolTip(
+            "Used wherever an action above is set to “Show all windows”.")
+        for combo in self.press_combos.values():
+            combo.currentIndexChanged.connect(self._sync_overview)
+        trig_form.addRow("“Show all windows” is:", self.overview_shortcut)
+        self._sync_overview()
         layout.addWidget(trig_box)
 
         # --- Gesture ---------------------------------------------------
@@ -403,9 +437,34 @@ class Window(QtWidgets.QWidget):
         self.refresh_status()
 
     # ------------------------------------------------------------------
-    def _sync_tap(self):
+    def _action_combo(self, shortcuts, value: str) -> QtWidgets.QComboBox:
+        """Editable combo: presets first, then every KWin shortcut name."""
+        combo = QtWidgets.QComboBox()
+        combo.setEditable(True)
+        for code, label in PRESET_ACTIONS:
+            combo.addItem(label, code)
+        combo.insertSeparator(combo.count())
+        for name in shortcuts:
+            combo.addItem(name, name)
+        idx = combo.findData(value)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        else:
+            combo.setCurrentText(value)
+        return combo
+
+    @staticmethod
+    def combo_value(combo: QtWidgets.QComboBox) -> str:
+        text = combo.currentText().strip()
+        for code, label in PRESET_ACTIONS:
+            if text == label:
+                return code
+        return text
+
+    def _sync_overview(self):
         self.overview_shortcut.setEnabled(
-            self.tap_combo.currentData() == "overview")
+            any(self.combo_value(c) == "overview"
+                for c in self.press_combos.values()))
 
     def _select_button(self, value):
         idx = self.button_combo.findData(str(value))
@@ -505,7 +564,10 @@ class Window(QtWidgets.QWidget):
         if button.startswith("BTN_") and not self.confirm_unknown_button(button):
             return
         self.cfg["trigger"]["button"] = self.current_button()
-        self.cfg["trigger"]["tap"] = self.tap_combo.currentData()
+        for key, combo in self.press_combos.items():
+            self.cfg["trigger"][key] = self.combo_value(combo)
+        self.cfg["trigger"]["hold_ms"] = self.hold_ms.value()
+        self.cfg["trigger"]["double_ms"] = self.double_ms.value()
         self.cfg["gesture"]["threshold"] = self.threshold.value()
         self.cfg["gesture"]["repeat"] = self.repeat.isChecked()
         self.cfg["gesture"]["lock_pointer"] = self.lock_pointer.isChecked()

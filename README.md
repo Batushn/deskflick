@@ -9,9 +9,9 @@ Hold your mouse's *back* button (button 4 / `BTN_SIDE`) and push the mouse:
 - ⬆️ push up → desktop above
 - ⬇️ push down → desktop below
 
-Keep holding and keep pushing to fly across your whole grid. A quick **tap**
-of the button is passed through untouched, so *back* still works in your
-browser.
+Keep holding and keep pushing to fly across your whole grid. **Tap**,
+**double tap** and **press-and-hold** are separately bindable — by default a
+tap is passed through untouched, so *back* still works in your browser.
 
 - 🖥️ **Wayland & X11** — reads evdev directly, re-emits through uinput
 - 🎨 **Native feel** — triggers KWin's own shortcuts via D-Bus, so you get
@@ -22,8 +22,9 @@ browser.
   systemd user service
 - 🖱️ **Settings GUI** — `deskflick-ui` (Qt): pick the trigger button (or
   capture it by pressing it), tune sensitivity, rebind actions
-- 🪟 **Tap does what you choose** — replay the button's original action,
-  toggle *Present Windows (All desktops)* (the Ctrl+F10 effect), or nothing
+- 🪟 **Tap, double tap and press-and-hold are each bindable** — to the
+  button's original action, *Present Windows*, any KWin shortcut, or a shell
+  command
 - 🎮 **Handles gaming mice** — buttons that send keyboard macros from an
   onboard profile live on a second HID interface; deskflick grabs those too,
   so the macro no longer leaks through while you gesture
@@ -62,7 +63,11 @@ fully commented), then `systemctl --user restart deskflick`.
 ```toml
 [trigger]
 button = "BTN_SIDE"       # "BTN_EXTRA" for button 5, "BTN_MIDDLE", KEY_* ...
-tap = "passthrough"       # passthrough | overview | none
+tap = "passthrough"       # passthrough | overview | none | any KWin shortcut
+double = "none"           # two quick presses
+hold = "none"             # held down without flicking
+double_ms = 250
+hold_ms = 500
 
 [gesture]
 threshold = 150           # lower = more sensitive

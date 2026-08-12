@@ -32,13 +32,19 @@ VIRTUAL_SUFFIX = " [deskflick]"
 RESCUE_BUTTONS = ("BTN_LEFT", "BTN_RIGHT", "BTN_MIDDLE", "BTN_SIDE",
                   "BTN_EXTRA", "BTN_FORWARD", "BTN_BACK", "BTN_TASK")
 
+# Values every press action accepts, on top of any KWin shortcut name or
+# "cmd:<shell command>".
 TAP_MODES = ("passthrough", "overview", "none")
 
 DEFAULT_CONFIG = {
     "trigger": {
         "button": "BTN_SIDE",
         "tap": "passthrough",
+        "double": "none",
+        "hold": "none",
         "tap_timeout_ms": 350,
+        "double_ms": 250,
+        "hold_ms": 500,
     },
     "gesture": {
         "threshold": 150,
@@ -101,7 +107,10 @@ class Config:
         self.button_name = key_name(code)
         self.trigger_is_button = self.button_name.startswith("BTN_")
 
-        tap = str(get("trigger", "tap")).lower()
+        # Never case-fold these: KWin shortcut names are case-sensitive, and
+        # lowercase "overview" (our keyword) must stay distinct from KWin's
+        # own "Overview" shortcut.
+        tap = str(get("trigger", "tap"))
         # legacy keys from <= 0.3.0
         if "tap" not in data.get("trigger", {}):
             if data.get("overview", {}).get("enabled"):
@@ -110,8 +119,12 @@ class Config:
                 tap = "none"
             else:
                 tap = "passthrough"
-        self.tap = tap if tap in TAP_MODES else "passthrough"
+        self.tap = tap or "passthrough"
+        self.double = str(get("trigger", "double")) or "none"
+        self.hold = str(get("trigger", "hold")) or "none"
         self.tap_timeout = float(get("trigger", "tap_timeout_ms")) / 1000.0
+        self.double_window = float(get("trigger", "double_ms")) / 1000.0
+        self.hold_delay = float(get("trigger", "hold_ms")) / 1000.0
 
         self.threshold = max(10, int(get("gesture", "threshold")))
         self.repeat = bool(get("gesture", "repeat"))
@@ -125,6 +138,14 @@ class Config:
             for d in ("left", "right", "up", "down")
         }
         self.overview_shortcut = str(get("overview", "shortcut"))
+
+    def resolve(self, action: str) -> str | None:
+        """Config value -> shortcut/command, or None for 'do nothing'."""
+        if not action or action == "none":
+            return None
+        if action == "overview":
+            return self.overview_shortcut
+        return action
 
     @classmethod
     def load(cls, path: str) -> "Config":
@@ -166,7 +187,8 @@ class Gesture:
         self.cfg = cfg
         self.verbose = verbose
         self.held = False
-        self.fired = False
+        self.consumed = False   # a flick or a long press already happened
+        self.flicked = False    # used to gate repeats within one hold
         self.press_time = 0.0
         self.last_fire = 0.0
         self.acc_x = 0
@@ -174,10 +196,17 @@ class Gesture:
         # key events swallowed on a macro/keyboard interface during a hold,
         # replayed verbatim if the hold turns out to be a tap
         self.swallowed: list[tuple[int, int]] = []
+        # pending single-tap (waiting to see if a double follows) and the
+        # long-press countdown
+        self.tap_task: asyncio.Task | None = None
+        self.hold_task: asyncio.Task | None = None
+        self.double_armed = False
+        self.last_tap_time = 0.0
 
     def press(self):
         self.held = True
-        self.fired = False
+        self.consumed = False
+        self.flicked = False
         self.acc_x = self.acc_y = 0
         self.swallowed.clear()
         self.press_time = time.monotonic()
@@ -185,7 +214,7 @@ class Gesture:
     def release(self) -> bool:
         """End a hold. Returns True if it counts as a tap."""
         was_held, self.held = self.held, False
-        return (was_held and not self.fired
+        return (was_held and not self.consumed
                 and time.monotonic() - self.press_time <= self.cfg.tap_timeout)
 
     def expire(self):
@@ -193,6 +222,13 @@ class Gesture:
         if self.held and time.monotonic() - self.press_time > 10:
             self.held = False
             self.swallowed.clear()
+            self.cancel(self.hold_task)
+            self.hold_task = None
+
+    @staticmethod
+    def cancel(task: asyncio.Task | None):
+        if task and not task.done():
+            task.cancel()
 
     def add_motion(self, code: int, value: int) -> str | None:
         cfg = self.cfg
@@ -206,7 +242,7 @@ class Gesture:
         now = time.monotonic()
         if now - self.last_fire < cfg.cooldown:
             return None
-        if self.fired and not cfg.repeat:
+        if self.flicked and not cfg.repeat:
             return None
 
         x = -self.acc_x if cfg.invert_x else self.acc_x
@@ -218,7 +254,8 @@ class Gesture:
         else:
             return None
 
-        self.fired = True
+        self.flicked = True
+        self.consumed = True
         self.last_fire = now
         self.acc_x = self.acc_y = 0
         return direction
@@ -285,28 +322,83 @@ class DeviceWorker:
 
     async def _on_trigger(self, value: int):
         g, cfg = self.g, self.cfg
+        now = time.monotonic()
+
         if value == 1:
+            # A press landing inside the double-tap window turns the pending
+            # single tap into a double.
+            if (cfg.double != "none" and g.tap_task and not g.tap_task.done()
+                    and now - g.last_tap_time <= cfg.double_window):
+                g.cancel(g.tap_task)
+                g.tap_task = None
+                g.double_armed = True
             g.press()
+            if cfg.hold != "none":
+                g.hold_task = asyncio.ensure_future(self._hold_countdown())
             return
+
         if value == 2:  # autorepeat
             return
-        if not g.release():
-            g.swallowed.clear()
+
+        g.cancel(g.hold_task)
+        g.hold_task = None
+        tap = g.release()
+        swallowed, g.swallowed = list(g.swallowed), []
+        if not tap:
+            g.double_armed = False
             return
 
-        if cfg.tap == "overview":
-            asyncio.ensure_future(
-                run_action(cfg.overview_shortcut, self.verbose))
-        elif cfg.tap == "passthrough":
-            self._replay_tap()
-        g.swallowed.clear()
+        if g.double_armed:
+            g.double_armed = False
+            if self.verbose:
+                log(f"[{self.dev.name}] double tap")
+            await self._do_action(cfg.double, swallowed, repeat=2)
+        elif cfg.double == "none":
+            await self._do_action(cfg.tap, swallowed)
+        else:
+            # Wait out the double-tap window before committing to a single.
+            g.last_tap_time = now
+            g.tap_task = asyncio.ensure_future(self._delayed_tap(swallowed))
 
-    def _replay_tap(self):
+    async def _hold_countdown(self):
+        """Fire the long-press action if the button stays down and still."""
+        try:
+            await asyncio.sleep(self.cfg.hold_delay)
+        except asyncio.CancelledError:
+            return
+        g = self.g
+        if not g.held or g.consumed:
+            return
+        g.consumed = True
+        g.swallowed.clear()
+        if self.verbose:
+            log(f"[{self.dev.name}] long press")
+        await self._do_action(self.cfg.hold, [])
+
+    async def _delayed_tap(self, swallowed):
+        try:
+            await asyncio.sleep(self.cfg.double_window)
+        except asyncio.CancelledError:
+            return
+        await self._do_action(self.cfg.tap, swallowed)
+
+    async def _do_action(self, action: str, swallowed, repeat: int = 1):
+        if action == "passthrough":
+            for i in range(repeat):
+                if i:
+                    await asyncio.sleep(0.06)
+                self._replay(swallowed)
+            return
+        target = self.cfg.resolve(action)
+        if target:
+            await run_action(target, self.verbose)
+
+    def _replay(self, swallowed):
         """Re-send the button's original action through the clone."""
         ui = self.ui
         ui.write(ecodes.EV_KEY, self.cfg.button, 1)
         ui.syn()
-        for code, value in self.g.swallowed:
+        for code, value in swallowed:
             ui.write(ecodes.EV_KEY, code, value)
             ui.syn()
         ui.write(ecodes.EV_KEY, self.cfg.button, 0)
@@ -595,7 +687,7 @@ def main():
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, loop.stop)
     log(f"deskflick: trigger={cfg.button_name} threshold={cfg.threshold}px "
-        f"tap={cfg.tap}")
+        f"tap={cfg.tap} double={cfg.double} hold={cfg.hold}")
     loop.create_task(main_loop(cfg, args.verbose))
     try:
         loop.run_forever()
