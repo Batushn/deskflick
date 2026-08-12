@@ -1,6 +1,6 @@
 # Maintainer: Batuhan Sahin <mrbatuhansahin@gmail.com>
 pkgname=deskflick
-pkgver=0.3.0
+pkgver=0.4.0
 pkgrel=1
 pkgdesc="Hold a mouse button and flick to switch KDE Plasma virtual desktops (Wayland & X11)"
 arch=('any')
@@ -16,7 +16,7 @@ package() {
     install -Dm755 deskflick.py "$pkgdir/usr/bin/deskflick"
     install -Dm755 deskflick-ui.py "$pkgdir/usr/bin/deskflick-ui"
     install -Dm644 deskflick.desktop "$pkgdir/usr/share/applications/deskflick.desktop"
-    install -Dm644 99-deskflick-uinput.rules "$pkgdir/usr/lib/udev/rules.d/99-deskflick-uinput.rules"
+    install -Dm644 60-deskflick.rules "$pkgdir/usr/lib/udev/rules.d/60-deskflick.rules"
     install -Dm644 deskflick.service "$pkgdir/usr/lib/systemd/user/deskflick.service"
     install -Dm644 config.example.toml "$pkgdir/usr/share/doc/$pkgname/config.example.toml"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"

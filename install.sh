@@ -15,7 +15,8 @@ echo ":: Installing binaries (sudo needed for /usr/local/bin and udev rule)"
 sudo install -Dm755 deskflick.py /usr/local/bin/deskflick
 sudo install -Dm755 deskflick-ui.py /usr/local/bin/deskflick-ui
 sudo install -Dm644 deskflick.desktop /usr/local/share/applications/deskflick.desktop
-sudo install -Dm644 99-deskflick-uinput.rules /etc/udev/rules.d/99-deskflick-uinput.rules
+sudo rm -f /etc/udev/rules.d/99-deskflick-uinput.rules   # pre-0.4.0 name: sorted too late to work
+sudo install -Dm644 60-deskflick.rules /etc/udev/rules.d/60-deskflick.rules
 
 if ! python3 -c "import PySide6" 2>/dev/null; then
     echo "note: PySide6 not found — the deskflick-ui settings window needs it."
@@ -26,6 +27,15 @@ sudo udevadm trigger /dev/uinput 2>/dev/null || true
 # Apply the mouse ACL to devices that are already plugged in
 sudo udevadm trigger --subsystem-match=input --action=change 2>/dev/null || true
 sudo udevadm settle 2>/dev/null || true
+
+# Mice that send keyboard macros expose them on a second HID interface, which
+# the mouse-only ACL above does not cover. `input` group membership does; it
+# needs one logout to take effect.
+if ! id -nG "$USER" | grep -qw input; then
+    echo ":: Adding $USER to the input group (needed for macro buttons;"
+    echo "   takes effect after you log out and back in once)"
+    sudo usermod -aG input "$USER"
+fi
 
 echo ":: Installing user config and systemd service"
 mkdir -p ~/.config/deskflick

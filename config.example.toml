@@ -5,12 +5,16 @@
 [trigger]
 # Which mouse button starts a gesture while held.
 # Common values: "BTN_SIDE" (back / button 4), "BTN_EXTRA" (forward / button 5),
-# "BTN_MIDDLE". Any evdev key name or numeric code works.
+# "BTN_MIDDLE". Any evdev name works, including KEY_* for mice whose extra
+# buttons send keyboard macros from their onboard profile — those are only
+# honoured on the mouse itself, never on your real keyboard.
 button = "BTN_SIDE"
 
-# A quick tap (press+release without moving) is replayed as a normal click,
-# so the button keeps working as "back" in browsers etc.
-tap_passthrough = true
+# What a quick tap (press+release without moving) should do:
+#   "passthrough" — replay the button's original action (click or macro)
+#   "overview"    — toggle the shortcut in [overview] below (show all windows)
+#   "none"        — nothing; the button belongs to deskflick alone
+tap = "passthrough"
 tap_timeout_ms = 350
 
 [gesture]
@@ -47,10 +51,7 @@ down  = "Switch One Desktop Down"
 # down = "cmd:notify-send 'flick!'"
 
 [overview]
-# When enabled, a quick tap of the trigger button toggles KWin's
-# "Present Windows (All desktops)" effect (the Ctrl+F10 one) instead of
-# acting as a normal click. Hold + flick still switches desktops.
-enabled = false
-# KGlobalAccel shortcut invoked by the tap. "ExposeAll" = Present Windows
-# (All desktops); other ideas: "Overview", "Expose" (current desktop only).
+# Shortcut invoked when tap = "overview" above. "ExposeAll" is Present Windows
+# (All desktops), the Ctrl+F10 effect; other ideas: "Overview", or "Expose"
+# for the current desktop only.
 shortcut = "ExposeAll"

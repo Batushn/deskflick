@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""deskflick-ui — small settings window for deskflick.
+"""deskflick-ui — settings window for deskflick.
 
-Edits ~/.config/deskflick/config.toml and restarts the deskflick user
-service on save. Can capture a trigger button directly from your mouse
-("Detect" button).
+Edits ~/.config/deskflick/config.toml and restarts the deskflick user service
+on save. The trigger can be captured straight from the mouse, including
+buttons that send keyboard macros from the mouse's onboard profile.
 """
 
 import os
+import re
 import subprocess
 import sys
 import tomllib
@@ -16,7 +17,7 @@ from PySide6 import QtCore, QtWidgets
 CONFIG_PATH = os.path.expanduser("~/.config/deskflick/config.toml")
 
 DEFAULTS = {
-    "trigger": {"button": "BTN_SIDE", "tap_passthrough": True, "tap_timeout_ms": 350},
+    "trigger": {"button": "BTN_SIDE", "tap": "passthrough", "tap_timeout_ms": 350},
     "gesture": {
         "threshold": 150, "repeat": True, "cooldown_ms": 180,
         "lock_pointer": True, "invert_x": False, "invert_y": False,
@@ -27,7 +28,7 @@ DEFAULTS = {
         "up": "Switch One Desktop Up",
         "down": "Switch One Desktop Down",
     },
-    "overview": {"enabled": False, "shortcut": "ExposeAll"},
+    "overview": {"shortcut": "ExposeAll"},
 }
 
 BUTTON_CHOICES = [
@@ -39,18 +40,37 @@ BUTTON_CHOICES = [
     ("BTN_TASK", "BTN_TASK"),
 ]
 
+TAP_CHOICES = [
+    ("passthrough", "Do its original thing (normal click / macro)"),
+    ("overview", "Show all windows (Present Windows)"),
+    ("none", "Nothing — the button is deskflick's alone"),
+]
+
 
 def load_config() -> dict:
     cfg = {s: dict(v) for s, v in DEFAULTS.items()}
-    if os.path.exists(CONFIG_PATH):
-        try:
-            with open(CONFIG_PATH, "rb") as f:
-                user = tomllib.load(f)
-            for section, values in user.items():
-                if section in cfg and isinstance(values, dict):
-                    cfg[section].update(values)
-        except Exception as e:
-            print(f"warning: could not parse {CONFIG_PATH}: {e}", file=sys.stderr)
+    if not os.path.exists(CONFIG_PATH):
+        return cfg
+    try:
+        with open(CONFIG_PATH, "rb") as f:
+            user = tomllib.load(f)
+    except Exception as e:
+        print(f"warning: could not parse {CONFIG_PATH}: {e}", file=sys.stderr)
+        return cfg
+    for section, values in user.items():
+        if section in cfg and isinstance(values, dict):
+            cfg[section].update(values)
+    # migrate <= 0.3.0 layout
+    trig = user.get("trigger", {})
+    if "tap" not in trig:
+        if user.get("overview", {}).get("enabled"):
+            cfg["trigger"]["tap"] = "overview"
+        elif trig.get("tap_passthrough") is False:
+            cfg["trigger"]["tap"] = "none"
+        else:
+            cfg["trigger"]["tap"] = "passthrough"
+    cfg["trigger"].pop("tap_passthrough", None)
+    cfg["overview"].pop("enabled", None)
     return cfg
 
 
@@ -73,7 +93,6 @@ def dump_config(cfg: dict) -> str:
 
 
 def kwin_shortcut_names() -> list[str]:
-    """All bindable KWin global shortcut names, via KGlobalAccel."""
     try:
         out = subprocess.run(
             ["gdbus", "call", "--session",
@@ -82,71 +101,21 @@ def kwin_shortcut_names() -> list[str]:
              "--method", "org.kde.kglobalaccel.Component.shortcutNames"],
             capture_output=True, text=True, timeout=3,
         ).stdout
-        import re
         return sorted(set(re.findall(r"'((?:[^'\\]|\\.)*)'", out)))
     except Exception:
         return []
 
 
-class ButtonCapture(QtCore.QThread):
-    """Waits for the next mouse-button press on any input device.
+def pretty_key(name: str) -> str:
+    if name.startswith("BTN_"):
+        for code, label in BUTTON_CHOICES:
+            if code == name:
+                return label
+        return name
+    return name.replace("KEY_", "").replace("_", " ").title() + f"  ({name})"
 
-    Also listens on deskflick's own virtual devices, so capture works while
-    the daemon has the physical mouse grabbed. The current trigger button is
-    swallowed by the daemon, so press a *different* button to capture it.
-    """
 
-    captured = QtCore.Signal(str)
-
-    def run(self):
-        try:
-            import select
-            from evdev import InputDevice, ecodes, list_devices
-        except ImportError:
-            self.captured.emit("")
-            return
-        ignore = {ecodes.BTN_LEFT, ecodes.BTN_RIGHT, ecodes.BTN_TOUCH,
-                  ecodes.BTN_TOOL_FINGER, ecodes.BTN_TOOL_DOUBLETAP}
-        devices = []
-        for path in list_devices():
-            try:
-                dev = InputDevice(path)
-            except OSError:
-                continue
-            if ecodes.EV_KEY in dev.capabilities():
-                devices.append(dev)
-            else:
-                dev.close()
-        if not devices:
-            self.captured.emit("")
-            return
-        name = ""
-        deadline = QtCore.QDeadlineTimer(15000)
-        try:
-            while (not deadline.hasExpired() and not name
-                   and not self.isInterruptionRequested()):
-                r, _, _ = select.select(devices, [], [], 0.2)
-                for dev in r:
-                    try:
-                        for ev in dev.read():
-                            if (ev.type == ecodes.EV_KEY and ev.value == 1
-                                    and ev.code not in ignore):
-                                names = ecodes.keys.get(ev.code) or ecodes.BTN.get(ev.code)
-                                if isinstance(names, list):
-                                    names = next(
-                                        (n for n in names if n.startswith("BTN_")),
-                                        names[0])
-                                if names and str(names).startswith("BTN_"):
-                                    name = str(names)
-                                    break
-                    except OSError:
-                        pass
-                    if name:
-                        break
-        finally:
-            for dev in devices:
-                dev.close()
-        self.captured.emit(name)
+# ------------------------------------------------------------------ capture
 
 
 QT_BUTTON_MAP = {
@@ -159,12 +128,87 @@ QT_BUTTON_MAP = {
 }
 
 
-class CaptureDialog(QtWidgets.QDialog):
-    """Press the wanted mouse button over this dialog.
+class EvdevCapture(QtCore.QThread):
+    """Reports the first key/button burst seen on any readable device.
 
-    Captures via Qt mouse events (works on Wayland without any permissions)
-    and, in parallel, via evdev (works for buttons the compositor never
-    delivers to apps). Whichever fires first wins.
+    Reports the whole burst, not just one key: mice with onboard profiles
+    send macros like Ctrl+Tab, and the user needs to see that is what their
+    button does. Devices deskflick itself created are skipped.
+    """
+
+    captured = QtCore.Signal(str, str, str)  # first key, full combo, device
+    failed = QtCore.Signal(str)
+
+    def run(self):
+        try:
+            import select
+            import time
+            from evdev import InputDevice, ecodes, list_devices
+        except ImportError:
+            self.failed.emit("python-evdev is not installed")
+            return
+
+        ignore = {ecodes.BTN_LEFT, ecodes.BTN_RIGHT, ecodes.BTN_TOUCH,
+                  ecodes.BTN_TOOL_FINGER, ecodes.BTN_TOOL_DOUBLETAP}
+        devices, unreadable = [], 0
+        for path in list_devices():
+            try:
+                dev = InputDevice(path)
+            except OSError:
+                unreadable += 1
+                continue
+            if ecodes.EV_KEY in dev.capabilities() and "[deskflick]" not in dev.name:
+                devices.append(dev)
+            else:
+                dev.close()
+        if not devices:
+            self.failed.emit(
+                f"no readable input devices ({unreadable} without permission)")
+            return
+
+        first, burst, source = "", [], ""
+        burst_until = None
+        try:
+            while not self.isInterruptionRequested():
+                if burst_until and time.monotonic() > burst_until:
+                    break
+                r, _, _ = select.select(devices, [], [], 0.1)
+                for dev in r:
+                    try:
+                        events = list(dev.read())
+                    except OSError:
+                        continue
+                    for ev in events:
+                        if ev.type != ecodes.EV_KEY or ev.value != 1:
+                            continue
+                        if ev.code in ignore:
+                            continue
+                        name = ecodes.bytype[ecodes.EV_KEY].get(ev.code)
+                        if isinstance(name, (list, tuple)):
+                            name = next((n for n in name
+                                         if n.startswith("BTN_")), name[0])
+                        if not name:
+                            continue
+                        if not first:
+                            first, source = name, dev.name
+                            burst_until = time.monotonic() + 0.15
+                        if name not in burst:
+                            burst.append(name)
+        finally:
+            for dev in devices:
+                dev.close()
+        if first:
+            self.captured.emit(first, " + ".join(burst), source)
+        else:
+            self.failed.emit("")
+
+
+class CaptureDialog(QtWidgets.QDialog):
+    """Press the wanted button over this dialog.
+
+    Two capture paths run at once: Qt mouse events (always work, no
+    permissions needed, but only see real mouse buttons) and evdev (sees
+    macro keys and reports which device they came from).
     """
 
     def __init__(self, parent):
@@ -172,45 +216,70 @@ class CaptureDialog(QtWidgets.QDialog):
         self.setWindowTitle("Detect button")
         self.setModal(True)
         self.result_button = ""
+        self.note = ""
+
         layout = QtWidgets.QVBoxLayout(self)
-        label = QtWidgets.QLabel(
-            "<b>Press the mouse button you want to use</b><br>"
-            "with the cursor over this window.<br><br>"
-            "<small>Left/right click are ignored. If the button is the "
-            "current trigger, a quick tap works (it is replayed); with "
-            "Present Windows tap mode on, pick it from the list "
-            "instead.</small>")
-        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(label)
+        self.label = QtWidgets.QLabel(
+            "<b>Press the button you want to use</b><br>"
+            "with the pointer over this window.<br><br>"
+            "<small>Left and right click are ignored.</small>")
+        self.label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.label.setWordWrap(True)
+        layout.addWidget(self.label)
         cancel = QtWidgets.QPushButton("Cancel")
         cancel.clicked.connect(self.reject)
         layout.addWidget(cancel)
-        self.setMinimumSize(340, 180)
+        self.setMinimumSize(400, 200)
 
-        self.evdev_thread = ButtonCapture()
-        self.evdev_thread.captured.connect(self._on_evdev)
-        self.evdev_thread.start()
-        QtCore.QTimer.singleShot(15000, self.reject)
+        self.thread = EvdevCapture()
+        self.thread.captured.connect(self._on_evdev)
+        self.thread.failed.connect(self._on_failed)
+        self.thread.start()
+        self.evdev_error = None
+        QtCore.QTimer.singleShot(20000, self.reject)
 
     def mousePressEvent(self, event):
         name = QT_BUTTON_MAP.get(event.button())
         if name:
-            self._finish(name)
+            # Give evdev a moment: it knows whether this button also fires a
+            # macro, which Qt cannot see.
+            QtCore.QTimer.singleShot(200, lambda: self._finish(name, ""))
         event.accept()
 
-    def _on_evdev(self, name: str):
-        if name and not self.result_button:
-            self._finish(name)
+    def _on_evdev(self, first: str, combo: str, device: str):
+        note = ""
+        if combo and combo != first:
+            note = (f"That button sends <b>{combo}</b> from its onboard "
+                    f"profile (device: {device}). deskflick will bind "
+                    f"<b>{first}</b> and suppress the rest while you gesture.")
+        elif device:
+            note = f"Detected on: {device}"
+        self._finish(first, note)
 
-    def _finish(self, name: str):
+    def _on_failed(self, message: str):
+        self.evdev_error = message
+        if message:
+            self.label.setText(
+                self.label.text() +
+                f"<br><br><small style='color:#c0392b'>evdev: {message}. "
+                "Only real mouse buttons can be detected; macro buttons "
+                "need working permissions (re-run install.sh).</small>")
+
+    def _finish(self, name: str, note: str):
+        if self.result_button:
+            return
         self.result_button = name
+        self.note = note
         self.accept()
 
     def done(self, r):
-        if self.evdev_thread.isRunning():
-            self.evdev_thread.requestInterruption()
-            self.evdev_thread.wait(2000)
+        if self.thread.isRunning():
+            self.thread.requestInterruption()
+            self.thread.wait(2000)
         super().done(r)
+
+
+# ------------------------------------------------------------------ window
 
 
 class Window(QtWidgets.QWidget):
@@ -223,7 +292,7 @@ class Window(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
 
         # --- Trigger ---------------------------------------------------
-        trig_box = QtWidgets.QGroupBox("Trigger button")
+        trig_box = QtWidgets.QGroupBox("Trigger")
         trig_form = QtWidgets.QFormLayout(trig_box)
 
         self.button_combo = QtWidgets.QComboBox()
@@ -234,35 +303,33 @@ class Window(QtWidgets.QWidget):
 
         self.detect_btn = QtWidgets.QPushButton("Detect…")
         self.detect_btn.setToolTip(
-            "Opens a window — press the mouse button you want over it.")
+            "Opens a window — press the button you want over it.")
         self.detect_btn.clicked.connect(self.start_capture)
 
         row = QtWidgets.QHBoxLayout()
         row.addWidget(self.button_combo, 1)
         row.addWidget(self.detect_btn)
-        trig_form.addRow("Button:", row)
+        trig_form.addRow("Hold this button:", row)
 
-        self.tap_passthrough = QtWidgets.QCheckBox(
-            "A quick tap acts as a normal click (keeps “back” working)")
-        self.tap_passthrough.setChecked(bool(self.cfg["trigger"]["tap_passthrough"]))
-        trig_form.addRow(self.tap_passthrough)
+        self.trigger_note = QtWidgets.QLabel()
+        self.trigger_note.setWordWrap(True)
+        self.trigger_note.setStyleSheet("color: palette(mid);")
+        trig_form.addRow(self.trigger_note)
 
-        self.overview_check = QtWidgets.QCheckBox(
-            "A quick tap shows all windows instead (Present Windows, Ctrl+F10)")
-        self.overview_check.setChecked(bool(self.cfg["overview"]["enabled"]))
-        self.overview_check.setToolTip(
-            "When enabled, tapping the trigger button toggles KWin's\n"
-            "“Present Windows (All desktops)” effect instead of clicking.\n"
-            "Hold + flick still switches desktops.")
-        trig_form.addRow(self.overview_check)
+        self.tap_combo = QtWidgets.QComboBox()
+        for code, label in TAP_CHOICES:
+            self.tap_combo.addItem(label, code)
+        idx = self.tap_combo.findData(str(self.cfg["trigger"]["tap"]))
+        self.tap_combo.setCurrentIndex(max(0, idx))
+        trig_form.addRow("A quick tap should:", self.tap_combo)
 
         self.overview_shortcut = QtWidgets.QComboBox()
         self.overview_shortcut.setEditable(True)
         self.overview_shortcut.addItems(shortcuts or ["ExposeAll", "Overview"])
         self.overview_shortcut.setCurrentText(str(self.cfg["overview"]["shortcut"]))
-        self.overview_check.toggled.connect(self.overview_shortcut.setEnabled)
-        self.overview_shortcut.setEnabled(self.overview_check.isChecked())
+        self.tap_combo.currentIndexChanged.connect(self._sync_tap)
         trig_form.addRow("Tap shortcut:", self.overview_shortcut)
+        self._sync_tap()
         layout.addWidget(trig_box)
 
         # --- Gesture ---------------------------------------------------
@@ -315,7 +382,7 @@ class Window(QtWidgets.QWidget):
 
         # --- Footer ----------------------------------------------------
         self.status = QtWidgets.QLabel()
-        self.refresh_status()
+        self.status.setWordWrap(True)
         save_btn = QtWidgets.QPushButton("Save && restart service")
         save_btn.setDefault(True)
         save_btn.clicked.connect(self.save)
@@ -323,8 +390,13 @@ class Window(QtWidgets.QWidget):
         frow.addWidget(self.status, 1)
         frow.addWidget(save_btn)
         layout.addLayout(frow)
+        self.refresh_status()
 
     # ------------------------------------------------------------------
+    def _sync_tap(self):
+        self.overview_shortcut.setEnabled(
+            self.tap_combo.currentData() == "overview")
+
     def _select_button(self, value):
         idx = self.button_combo.findData(str(value))
         if idx >= 0:
@@ -333,9 +405,6 @@ class Window(QtWidgets.QWidget):
             self.button_combo.setCurrentText(str(value))
 
     def current_button(self) -> str:
-        data = self.button_combo.currentData()
-        if data and self.button_combo.currentText() == dict(BUTTON_CHOICES).get(data, ""):
-            return data
         text = self.button_combo.currentText().strip()
         for code, label in BUTTON_CHOICES:
             if text == label:
@@ -346,21 +415,42 @@ class Window(QtWidgets.QWidget):
         dlg = CaptureDialog(self)
         if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted and dlg.result_button:
             self._select_button(dlg.result_button)
+            self.trigger_note.setText(dlg.note)
+        elif not dlg.result_button and dlg.evdev_error is not None:
+            QtWidgets.QMessageBox.information(
+                self, "deskflick",
+                "No button was detected.\n\n"
+                "If it is a macro button, deskflick needs permission to read "
+                "your mouse's extra interfaces — re-run install.sh, and log "
+                "out and back in once.")
 
-    def service_active(self) -> bool:
-        r = subprocess.run(["systemctl", "--user", "is-active", "deskflick"],
-                           capture_output=True, text=True)
-        return r.stdout.strip() == "active"
+    # ------------------------------------------------------------------
+    def deskflick_state(self) -> str:
+        active = subprocess.run(["systemctl", "--user", "is-active", "deskflick"],
+                                capture_output=True, text=True).stdout.strip()
+        if active != "active":
+            return "Service: <b style='color:#c0392b'>stopped</b>"
+        out = subprocess.run(
+            ["journalctl", "--user", "-u", "deskflick", "-n", "40",
+             "--no-pager", "-o", "cat"],
+            capture_output=True, text=True).stdout
+        # only look at the current run
+        out = out.rsplit("deskflick: trigger=", 1)[-1]
+        grabbed = re.findall(r"attached to \S+ \((.+?)\) \[(.+?)\]", out)
+        if "no readable device reports" in out:
+            return ("Service: <b style='color:#c0392b'>running, but it cannot "
+                    "see that button</b> — re-run install.sh")
+        if not grabbed:
+            return "Service: <b style='color:#e67e22'>running, no device grabbed</b>"
+        names = ", ".join(sorted({n for n, _ in grabbed}))
+        return f"Service: <b style='color:#27ae60'>running</b> — {names}"
 
     def refresh_status(self):
-        if self.service_active():
-            self.status.setText("Service: <b style='color:#27ae60'>running</b>")
-        else:
-            self.status.setText("Service: <b style='color:#c0392b'>stopped</b>")
+        self.status.setText(self.deskflick_state())
 
     def save(self):
         self.cfg["trigger"]["button"] = self.current_button()
-        self.cfg["trigger"]["tap_passthrough"] = self.tap_passthrough.isChecked()
+        self.cfg["trigger"]["tap"] = self.tap_combo.currentData()
         self.cfg["gesture"]["threshold"] = self.threshold.value()
         self.cfg["gesture"]["repeat"] = self.repeat.isChecked()
         self.cfg["gesture"]["lock_pointer"] = self.lock_pointer.isChecked()
@@ -368,21 +458,20 @@ class Window(QtWidgets.QWidget):
         self.cfg["gesture"]["invert_y"] = self.invert_y.isChecked()
         for direction, combo in self.action_combos.items():
             self.cfg["actions"][direction] = combo.currentText().strip()
-        self.cfg["overview"]["enabled"] = self.overview_check.isChecked()
         self.cfg["overview"]["shortcut"] = self.overview_shortcut.currentText().strip()
 
         os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
         with open(CONFIG_PATH, "w") as f:
             f.write(dump_config(self.cfg))
 
-        # Small delay so the restart never lands while this very click is
-        # still being delivered.
+        self.status.setText("Restarting…")
+        # Small delay so the restart never lands inside this very click.
         QtCore.QTimer.singleShot(250, self._restart_service)
 
     def _restart_service(self):
         subprocess.run(["systemctl", "--user", "restart", "deskflick"],
                        capture_output=True)
-        QtCore.QTimer.singleShot(600, self.refresh_status)
+        QtCore.QTimer.singleShot(1500, self.refresh_status)
 
 
 def main():

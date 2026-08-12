@@ -5,6 +5,7 @@ rm -f ~/.config/systemd/user/deskflick.service
 systemctl --user daemon-reload
 sudo rm -f /usr/local/bin/deskflick /usr/local/bin/deskflick-ui \
     /usr/local/share/applications/deskflick.desktop \
+    /etc/udev/rules.d/60-deskflick.rules \
     /etc/udev/rules.d/99-deskflick-uinput.rules
 sudo udevadm control --reload-rules
 echo "deskflick removed. Config kept at ~/.config/deskflick (delete it if you want)."

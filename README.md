@@ -22,8 +22,11 @@ browser.
   systemd user service
 - 🖱️ **Settings GUI** — `deskflick-ui` (Qt): pick the trigger button (or
   capture it by pressing it), tune sensitivity, rebind actions
-- 🪟 **Present Windows mode** — optional: a quick tap toggles KWin's
-  *Present Windows (All desktops)* (the Ctrl+F10 effect) instead of clicking
+- 🪟 **Tap does what you choose** — replay the button's original action,
+  toggle *Present Windows (All desktops)* (the Ctrl+F10 effect), or nothing
+- 🎮 **Handles gaming mice** — buttons that send keyboard macros from an
+  onboard profile live on a second HID interface; deskflick grabs those too,
+  so the macro no longer leaks through while you gesture
 
 ## Install
 
@@ -58,8 +61,8 @@ fully commented), then `systemctl --user restart deskflick`.
 
 ```toml
 [trigger]
-button = "BTN_SIDE"       # "BTN_EXTRA" for button 5, "BTN_MIDDLE", ...
-tap_passthrough = true    # tap still acts as a normal click
+button = "BTN_SIDE"       # "BTN_EXTRA" for button 5, "BTN_MIDDLE", KEY_* ...
+tap = "passthrough"       # passthrough | overview | none
 
 [gesture]
 threshold = 150           # lower = more sensitive
@@ -75,8 +78,7 @@ up    = "Switch One Desktop Up"
 down  = "Switch One Desktop Down"
 
 [overview]
-enabled = false           # true: a tap toggles Present Windows (All desktops)
-shortcut = "ExposeAll"    # the Ctrl+F10 effect; hold+flick still switches desktops
+shortcut = "ExposeAll"    # used when tap = "overview"
 ```
 
 List all bindable KWin shortcut names:
@@ -98,8 +100,12 @@ journalctl --user -u deskflick -f
   shouldn't happen: deskflick refuses to grab a mouse while a button is
   held, always flushes releases through the clone before letting go, and
   the service runs `--unstick` after every stop, even a kill.
-- **"no readable input devices"** — the udev ACL hasn't been applied yet;
-  unplug/replug the mouse or re-run `./install.sh`.
+- **"no readable input devices"**, or the settings window says *cannot see
+  that button* — the udev ACL hasn't been applied; re-run `./install.sh`.
+- **The button still does its old thing** — deskflick isn't grabbing it. The
+  status line in `deskflick-ui` names every device it grabbed; if your mouse
+  isn't there, it's a permission problem. Macro buttons additionally need
+  `input` group membership, which needs one logout.
 - Desktops don't wrap by default — that's KWin's *Navigation wraps around*
   setting (System Settings → Window Management → Virtual Desktops).
 
