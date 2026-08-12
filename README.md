@@ -134,6 +134,10 @@ journalctl --user -u deskflick -f
   deskflick refuses to grab a mouse while a button is held, flushes releases
   through its clone before letting go, and runs `--unstick` after every service
   stop, even a kill.
+- **Diagonals snap to the wrong corner.** Corner actions live in
+  `[modifier]`, which has its own `invert_x`/`invert_y`. Binding a snap in
+  plain `[actions]` inherits `[gesture]`'s inversion instead, which is tuned
+  for desktop switching and will mirror the corner.
 - **Desktops don't wrap around.** That's KWin's *Navigation wraps around*
   setting, under Window Management → Virtual Desktops.
 

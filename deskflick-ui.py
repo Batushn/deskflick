@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tomllib
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 CONFIG_PATH = os.path.expanduser("~/.config/deskflick/config.toml")
 
@@ -138,6 +138,26 @@ def kwin_shortcut_names() -> list[str]:
 
 def label_for(direction: str) -> str:
     return direction.replace("_", "-").replace("-", " ").title()
+
+
+class NoWheel:
+    """Mixin: let the wheel scroll the page instead of changing the value.
+
+    Silently rebinding an action because the pointer happened to be over it
+    while scrolling is the kind of bug you only notice days later, in a
+    config you did not knowingly write.
+    """
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class ActionCombo(NoWheel, QtWidgets.QComboBox):
+    pass
+
+
+class SafeSpinBox(NoWheel, QtWidgets.QSpinBox):
+    pass
 
 
 # ------------------------------------------------------------------ capture
@@ -324,13 +344,23 @@ class Window(QtWidgets.QWidget):
         self.cfg = load_config()
         shortcuts = kwin_shortcut_names()
 
-        layout = QtWidgets.QVBoxLayout(self)
+        # Everything lives inside a scroll area: with eight flick directions
+        # in two tables, the form is taller than a lot of screens.
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        page = QtWidgets.QWidget()
+        scroll.setWidget(page)
+        outer.addWidget(scroll, 1)
+        layout = QtWidgets.QVBoxLayout(page)
 
         # --- Trigger ---------------------------------------------------
         trig_box = QtWidgets.QGroupBox("Trigger")
         trig_form = QtWidgets.QFormLayout(trig_box)
 
-        self.button_combo = QtWidgets.QComboBox()
+        self.button_combo = ActionCombo()
         self.button_combo.setEditable(True)
         for code, label in BUTTON_CHOICES:
             self.button_combo.addItem(label, code)
@@ -366,12 +396,12 @@ class Window(QtWidgets.QWidget):
             self.press_combos[key] = combo
             trig_form.addRow(label, combo)
 
-        self.hold_ms = QtWidgets.QSpinBox()
+        self.hold_ms = SafeSpinBox()
         self.hold_ms.setRange(150, 3000)
         self.hold_ms.setSingleStep(50)
         self.hold_ms.setSuffix(" ms")
         self.hold_ms.setValue(int(self.cfg["trigger"]["hold_ms"]))
-        self.double_ms = QtWidgets.QSpinBox()
+        self.double_ms = SafeSpinBox()
         self.double_ms.setRange(100, 800)
         self.double_ms.setSingleStep(25)
         self.double_ms.setSuffix(" ms")
@@ -385,7 +415,7 @@ class Window(QtWidgets.QWidget):
         timing.addStretch(1)
         trig_form.addRow("Timing:", timing)
 
-        self.overview_shortcut = QtWidgets.QComboBox()
+        self.overview_shortcut = ActionCombo()
         self.overview_shortcut.setEditable(True)
         self.overview_shortcut.addItems(shortcuts or ["ExposeAll", "Overview"])
         self.overview_shortcut.setCurrentText(str(self.cfg["overview"]["shortcut"]))
@@ -401,7 +431,9 @@ class Window(QtWidgets.QWidget):
         gest_box = QtWidgets.QGroupBox("Gesture")
         gest_form = QtWidgets.QFormLayout(gest_box)
 
-        self.threshold = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        class SafeSlider(NoWheel, QtWidgets.QSlider):
+            pass
+        self.threshold = SafeSlider(QtCore.Qt.Orientation.Horizontal)
         self.threshold.setRange(30, 600)
         self.threshold.setValue(int(self.cfg["gesture"]["threshold"]))
         self.threshold_label = QtWidgets.QLabel()
@@ -426,7 +458,7 @@ class Window(QtWidgets.QWidget):
         self.diagonals.setToolTip(
             "A diagonal with nothing bound to it falls back to its dominant "
             "direction, so this never swallows a sloppy flick.")
-        self.diagonal_ratio = QtWidgets.QSpinBox()
+        self.diagonal_ratio = SafeSpinBox()
         self.diagonal_ratio.setRange(20, 90)
         self.diagonal_ratio.setSingleStep(5)
         self.diagonal_ratio.setSuffix(" %")
@@ -481,7 +513,7 @@ class Window(QtWidgets.QWidget):
             "membership — log out and back in once after installing.")
         mod_form.addRow(self.mod_enabled)
 
-        self.mod_key = QtWidgets.QComboBox()
+        self.mod_key = ActionCombo()
         for code, label in MODIFIER_KEYS:
             self.mod_key.addItem(label, code)
         idx = self.mod_key.findData(str(self.cfg["modifier"]["key"]))
@@ -529,16 +561,20 @@ class Window(QtWidgets.QWidget):
         save_btn = QtWidgets.QPushButton("Save && restart service")
         save_btn.setDefault(True)
         save_btn.clicked.connect(self.save)
-        frow = QtWidgets.QHBoxLayout()
+        footer = QtWidgets.QWidget()
+        frow = QtWidgets.QHBoxLayout(footer)
         frow.addWidget(self.status, 1)
         frow.addWidget(save_btn)
-        layout.addLayout(frow)
+        outer.addWidget(footer)
         self.refresh_status()
+
+        self.resize(640, min(820, QtGui.QGuiApplication.primaryScreen()
+                             .availableGeometry().height() - 80))
 
     # ------------------------------------------------------------------
     def _action_combo(self, shortcuts, value: str) -> QtWidgets.QComboBox:
         """Editable combo: presets first, then every KWin shortcut name."""
-        combo = QtWidgets.QComboBox()
+        combo = ActionCombo()
         combo.setEditable(True)
         for code, label in PRESET_ACTIONS:
             combo.addItem(label, code)

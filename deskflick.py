@@ -401,16 +401,22 @@ class Gesture:
         if task and not task.done():
             task.cancel()
 
-    def add_motion(self, code: int, value: int, mod_held=None):
-        """Returns (direction, with_modifier), or None if nothing fires yet."""
-        cfg = self.cfg
+    def add_motion(self, code: int, value: int):
+        """Accumulate one axis. Deciding happens in evaluate(), on SYN."""
         if code == ecodes.REL_X:
             self.acc_x += value
         elif code == ecodes.REL_Y:
             self.acc_y += value
-        else:
-            return None
 
+    def evaluate(self, mod_held=None):
+        """Returns (direction, with_modifier), or None if nothing fires yet.
+
+        Called once per SYN_REPORT rather than per motion event: a mouse
+        reports X and Y as separate events, so judging after each one compares
+        a fresh axis against a stale one and reads diagonals as straight
+        flicks.
+        """
+        cfg = self.cfg
         now = time.monotonic()
         if now - self.last_fire < cfg.cooldown:
             return None
@@ -494,11 +500,17 @@ class DeviceWorker:
                     continue
 
                 if g.held and self.is_pointer and ev.type == ecodes.EV_REL:
-                    fired = g.add_motion(ev.code, ev.value, self._mod_held)
-                    if fired:
-                        self._flick(*fired)
+                    g.add_motion(ev.code, ev.value)
                     if ev.code in (ecodes.REL_X, ecodes.REL_Y) and cfg.lock_pointer:
                         continue
+
+                # One report carries X and Y as separate events; judge the
+                # gesture only once both have landed.
+                if (g.held and self.is_pointer and ev.type == ecodes.EV_SYN
+                        and ev.code == ecodes.SYN_REPORT):
+                    fired = g.evaluate(self._mod_held)
+                    if fired:
+                        self._flick(*fired)
 
                 if ev.type == ecodes.EV_KEY:
                     if ev.value == 1:
