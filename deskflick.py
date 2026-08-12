@@ -35,9 +35,10 @@ DIRECTIONS = ("left", "right", "up", "down",
 RESCUE_BUTTONS = ("BTN_LEFT", "BTN_RIGHT", "BTN_MIDDLE", "BTN_SIDE",
                   "BTN_EXTRA", "BTN_FORWARD", "BTN_BACK", "BTN_TASK")
 
-# Values every press action accepts, on top of any KWin shortcut name or
-# "cmd:<shell command>".
-TAP_MODES = ("passthrough", "overview", "none")
+# Besides these keywords, every press action also accepts a KWin shortcut
+# name or "cmd:<shell command>".
+#   passthrough -- replay the button's own action    overview -- [overview].shortcut
+#   none        -- do nothing
 
 DEFAULT_CONFIG = {
     "trigger": {

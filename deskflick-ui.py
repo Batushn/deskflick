@@ -140,15 +140,6 @@ def label_for(direction: str) -> str:
     return direction.replace("_", "-").replace("-", " ").title()
 
 
-def pretty_key(name: str) -> str:
-    if name.startswith("BTN_"):
-        for code, label in BUTTON_CHOICES:
-            if code == name:
-                return label
-        return name
-    return name.replace("KEY_", "").replace("_", " ").title() + f"  ({name})"
-
-
 # ------------------------------------------------------------------ capture
 
 

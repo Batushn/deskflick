@@ -3,12 +3,30 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+if ! python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"; then
+    echo "Python 3.11 or newer is required (for tomllib). Found:"
+    python3 --version
+    exit 1
+fi
+
 if ! python3 -c "import evdev" 2>/dev/null; then
     echo "python-evdev is required. Install it first:"
     echo "  Arch:   sudo pacman -S python-evdev"
     echo "  Debian: sudo apt install python3-evdev"
     echo "  Fedora: sudo dnf install python3-evdev"
     exit 1
+fi
+
+if ! command -v gdbus >/dev/null; then
+    echo "gdbus is required to talk to KWin (Arch: glib2, Debian: libglib2.0-bin)."
+    exit 1
+fi
+
+if ! gdbus call --session --dest org.kde.kglobalaccel \
+        --object-path /component/kwin \
+        --method org.kde.kglobalaccel.Component.shortcutNames >/dev/null 2>&1; then
+    echo "note: KWin's shortcut service did not answer. deskflick targets KDE"
+    echo "      Plasma; elsewhere, bind every action to \"cmd:...\" instead."
 fi
 
 echo ":: Installing binaries (sudo needed for /usr/local/bin and udev rule)"
