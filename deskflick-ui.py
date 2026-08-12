@@ -121,9 +121,10 @@ class ButtonCapture(QtCore.QThread):
             self.captured.emit("")
             return
         name = ""
-        deadline = QtCore.QDeadlineTimer(6000)
+        deadline = QtCore.QDeadlineTimer(15000)
         try:
-            while not deadline.hasExpired() and not name:
+            while (not deadline.hasExpired() and not name
+                   and not self.isInterruptionRequested()):
                 r, _, _ = select.select(devices, [], [], 0.2)
                 for dev in r:
                     try:
@@ -148,12 +149,74 @@ class ButtonCapture(QtCore.QThread):
         self.captured.emit(name)
 
 
+QT_BUTTON_MAP = {
+    QtCore.Qt.MouseButton.BackButton: "BTN_SIDE",      # button 4
+    QtCore.Qt.MouseButton.ForwardButton: "BTN_EXTRA",  # button 5
+    QtCore.Qt.MouseButton.MiddleButton: "BTN_MIDDLE",
+    QtCore.Qt.MouseButton.TaskButton: "BTN_TASK",
+    QtCore.Qt.MouseButton.ExtraButton4: "BTN_FORWARD",
+    QtCore.Qt.MouseButton.ExtraButton5: "BTN_BACK",
+}
+
+
+class CaptureDialog(QtWidgets.QDialog):
+    """Press the wanted mouse button over this dialog.
+
+    Captures via Qt mouse events (works on Wayland without any permissions)
+    and, in parallel, via evdev (works for buttons the compositor never
+    delivers to apps). Whichever fires first wins.
+    """
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("Detect button")
+        self.setModal(True)
+        self.result_button = ""
+        layout = QtWidgets.QVBoxLayout(self)
+        label = QtWidgets.QLabel(
+            "<b>Press the mouse button you want to use</b><br>"
+            "with the cursor over this window.<br><br>"
+            "<small>Left/right click are ignored. If the button is the "
+            "current trigger, a quick tap works (it is replayed); with "
+            "Present Windows tap mode on, pick it from the list "
+            "instead.</small>")
+        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(label)
+        cancel = QtWidgets.QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        layout.addWidget(cancel)
+        self.setMinimumSize(340, 180)
+
+        self.evdev_thread = ButtonCapture()
+        self.evdev_thread.captured.connect(self._on_evdev)
+        self.evdev_thread.start()
+        QtCore.QTimer.singleShot(15000, self.reject)
+
+    def mousePressEvent(self, event):
+        name = QT_BUTTON_MAP.get(event.button())
+        if name:
+            self._finish(name)
+        event.accept()
+
+    def _on_evdev(self, name: str):
+        if name and not self.result_button:
+            self._finish(name)
+
+    def _finish(self, name: str):
+        self.result_button = name
+        self.accept()
+
+    def done(self, r):
+        if self.evdev_thread.isRunning():
+            self.evdev_thread.requestInterruption()
+        super().done(r)
+
+
 class Window(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("deskflick")
         self.cfg = load_config()
-        self.capture_thread = None
         shortcuts = kwin_shortcut_names()
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -170,9 +233,7 @@ class Window(QtWidgets.QWidget):
 
         self.detect_btn = QtWidgets.QPushButton("Detect…")
         self.detect_btn.setToolTip(
-            "Click, then press the mouse button you want to use.\n"
-            "Note: the current trigger button can't be detected while the\n"
-            "daemon is running — press a different one, or pick from the list.")
+            "Opens a window — press the mouse button you want over it.")
         self.detect_btn.clicked.connect(self.start_capture)
 
         row = QtWidgets.QHBoxLayout()
@@ -281,26 +342,9 @@ class Window(QtWidgets.QWidget):
         return text
 
     def start_capture(self):
-        if self.capture_thread and self.capture_thread.isRunning():
-            return
-        self.detect_btn.setText("Press a button…")
-        self.detect_btn.setEnabled(False)
-        self.capture_thread = ButtonCapture()
-        self.capture_thread.captured.connect(self.on_captured)
-        self.capture_thread.start()
-
-    def on_captured(self, name: str):
-        self.detect_btn.setText("Detect…")
-        self.detect_btn.setEnabled(True)
-        if name:
-            self._select_button(name)
-        else:
-            QtWidgets.QMessageBox.information(
-                self, "deskflick",
-                "No button detected.\n\n"
-                "If you pressed the current trigger button, the daemon "
-                "swallows it — pick it from the list instead. Otherwise check "
-                "that you are in the `input` group.")
+        dlg = CaptureDialog(self)
+        if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted and dlg.result_button:
+            self._select_button(dlg.result_button)
 
     def service_active(self) -> bool:
         r = subprocess.run(["systemctl", "--user", "is-active", "deskflick"],
