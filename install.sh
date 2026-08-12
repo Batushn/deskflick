@@ -22,7 +22,7 @@ if ! python3 -c "import PySide6" 2>/dev/null; then
     echo "  Arch: sudo pacman -S pyside6"
 fi
 sudo udevadm control --reload-rules
-sudo udevadm trigger --name-match=uinput || true
+sudo udevadm trigger /dev/uinput 2>/dev/null || true
 
 if ! id -nG "$USER" | grep -qw input; then
     echo ":: Adding $USER to the input group (takes effect after re-login)"
