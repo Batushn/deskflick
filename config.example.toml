@@ -42,6 +42,10 @@ threshold = 150
 diagonals = true
 diagonal_ratio = 0.5
 
+# Pause between the steps of a chained action, so KWin's switch animation does
+# not swallow the second one.
+chain_delay_ms = 100
+
 # Keep switching desktops if you keep pushing while holding the button.
 repeat = true
 
@@ -67,14 +71,19 @@ right = "Switch One Desktop to the Right"
 up    = "Switch One Desktop Up"
 down  = "Switch One Desktop Down"
 
-# Diagonals. KWin has no diagonal desktop switch, so these start unbound and
-# fall back to the dominant direction until you put something here.
-up_left    = "none"
-up_right   = "none"
-down_left  = "none"
-down_right = "none"
+# Diagonals. KWin has no diagonal desktop switch, so "combine" runs both of
+# the component directions in turn: up-right moves one desktop up and one to
+# the right. Set any of them to "none" to fall back to the dominant axis.
+up_left    = "combine"
+up_right   = "combine"
+down_left  = "combine"
+down_right = "combine"
 
-# Examples:
+# Any action may also be a chain, run in order:
+#   up = "Switch One Desktop Up | Window Maximize"
+#   up = ["Switch One Desktop Up", "Window Maximize"]     # same thing
+#
+# Other examples:
 # up   = "Toggle Overview"
 # down = "cmd:notify-send 'flick!'"
 

@@ -23,15 +23,15 @@ DEFAULTS = {
     "gesture": {
         "threshold": 150, "repeat": True, "cooldown_ms": 180,
         "lock_pointer": False, "invert_x": True, "invert_y": True,
-        "diagonals": True, "diagonal_ratio": 0.5,
+        "diagonals": True, "diagonal_ratio": 0.5, "chain_delay_ms": 100,
     },
     "actions": {
         "left": "Switch One Desktop to the Left",
         "right": "Switch One Desktop to the Right",
         "up": "Switch One Desktop Up",
         "down": "Switch One Desktop Down",
-        "up_left": "none", "up_right": "none",
-        "down_left": "none", "down_right": "none",
+        "up_left": "combine", "up_right": "combine",
+        "down_left": "combine", "down_right": "combine",
     },
     "overview": {"shortcut": "ExposeAll"},
     "modifier": {
@@ -70,6 +70,8 @@ BUTTON_CHOICES = [
 
 # Offered at the top of every press-action box; anything else typed or picked
 # is passed to KWin as a shortcut name (or run as cmd:<command>).
+DIAGONAL_PRESET = ("combine", "Both directions at once (e.g. up + right)")
+
 PRESET_ACTIONS = [
     ("none", "— nothing —"),
     ("passthrough", "Its original action (click / macro)"),
@@ -494,7 +496,8 @@ class Window(QtWidgets.QWidget):
         act_form = QtWidgets.QFormLayout(act_box)
         self.action_combos = {}
         for direction, arrow in FLICK_DIRECTIONS:
-            combo = self._action_combo(shortcuts, str(self.cfg["actions"][direction]))
+            combo = self._action_combo(shortcuts, str(self.cfg["actions"][direction]),
+                                       diagonal="_" in direction)
             self.action_combos[direction] = combo
             act_form.addRow(f"{arrow} {label_for(direction)}:", combo)
         layout.addWidget(act_box)
@@ -522,7 +525,8 @@ class Window(QtWidgets.QWidget):
 
         self.mod_combos = {}
         for direction, arrow in FLICK_DIRECTIONS:
-            combo = self._action_combo(shortcuts, str(self.cfg["modifier"][direction]))
+            combo = self._action_combo(shortcuts, str(self.cfg["modifier"][direction]),
+                                       diagonal="_" in direction)
             self.mod_combos[direction] = combo
             mod_form.addRow(f"{arrow} {label_for(direction)}:", combo)
 
@@ -572,11 +576,15 @@ class Window(QtWidgets.QWidget):
                              .availableGeometry().height() - 80))
 
     # ------------------------------------------------------------------
-    def _action_combo(self, shortcuts, value: str) -> QtWidgets.QComboBox:
+    def _action_combo(self, shortcuts, value: str,
+                      diagonal: bool = False) -> QtWidgets.QComboBox:
         """Editable combo: presets first, then every KWin shortcut name."""
         combo = ActionCombo()
         combo.setEditable(True)
-        for code, label in PRESET_ACTIONS:
+        presets = list(PRESET_ACTIONS)
+        if diagonal:
+            presets.insert(1, DIAGONAL_PRESET)
+        for code, label in presets:
             combo.addItem(label, code)
         combo.insertSeparator(combo.count())
         for name in shortcuts:
@@ -591,7 +599,7 @@ class Window(QtWidgets.QWidget):
     @staticmethod
     def combo_value(combo: QtWidgets.QComboBox) -> str:
         text = combo.currentText().strip()
-        for code, label in PRESET_ACTIONS:
+        for code, label in [DIAGONAL_PRESET, *PRESET_ACTIONS]:
             if text == label:
                 return code
         return text

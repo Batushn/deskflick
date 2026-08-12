@@ -14,6 +14,7 @@ turns it into a whole navigation layer:
 | --- | --- |
 | Hold + flick **← → ↑ ↓** | Switch virtual desktop that way |
 | **Meta** + hold + flick | Snap the focused window that way (like Meta + arrows) |
+| Hold + flick **↖ ↗ ↙ ↘** | Move one desktop on both axes at once |
 | **Meta** + hold + flick **↖ ↗ ↙ ↘** | Snap the window into that corner |
 | Tap | Show desktop |
 | Double tap | Maximise window |
@@ -86,10 +87,11 @@ left = "Switch One Desktop to the Left"
 right = "Switch One Desktop to the Right"
 up = "Switch One Desktop Up"
 down = "Switch One Desktop Down"
-up_left = "none"             # unbound diagonals fall back to the dominant axis
-up_right = "none"
-down_left = "none"
-down_right = "none"
+up_left = "combine"          # run both component directions: up, then left
+up_right = "combine"         # "none" instead falls back to the dominant axis
+down_left = "combine"
+down_right = "combine"
+# any action can be a chain: "Switch One Desktop Up | Window Maximize"
 
 [modifier]                   # hold this too -> act on the window, not the desktop
 enabled = true

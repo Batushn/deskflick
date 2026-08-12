@@ -59,6 +59,9 @@ DEFAULT_CONFIG = {
         # roughly 27°-63° cone around each diagonal.
         "diagonals": True,
         "diagonal_ratio": 0.5,
+        # Gap between the steps of a chained action ("A | B", or a diagonal
+        # set to "combine"), so KWin's animation does not swallow the second.
+        "chain_delay_ms": 100,
         "lock_pointer": False,
         # Pushing the mouse feels like dragging the desktop under it, so the
         # view goes the other way. Flip either axis if you disagree.
@@ -70,12 +73,12 @@ DEFAULT_CONFIG = {
         "right": "Switch One Desktop to the Right",
         "up": "Switch One Desktop Up",
         "down": "Switch One Desktop Down",
-        # Unbound by default: an unbound diagonal falls back to its dominant
-        # axis, so switching desktops never stops working on a sloppy flick.
-        "up_left": "none",
-        "up_right": "none",
-        "down_left": "none",
-        "down_right": "none",
+        # KWin has no diagonal desktop switch, so a diagonal runs both of its
+        # component directions: up-right moves one desktop up and one right.
+        "up_left": "combine",
+        "up_right": "combine",
+        "down_left": "combine",
+        "down_right": "combine",
     },
     "overview": {
         "shortcut": "ExposeAll",
@@ -181,6 +184,7 @@ class Config:
         self.invert_x = bool(get("gesture", "invert_x"))
         self.invert_y = bool(get("gesture", "invert_y"))
 
+        self.chain_delay = float(get("gesture", "chain_delay_ms")) / 1000.0
         self.diagonals = bool(get("gesture", "diagonals"))
         self.diagonal_ratio = min(1.0, max(0.1, float(
             get("gesture", "diagonal_ratio"))))
@@ -208,17 +212,33 @@ class Config:
         self.mod_suppress = bool(get("modifier", "suppress_press"))
         self.mod_defuse = bool(get("modifier", "defuse_launcher"))
 
-    def action_for(self, direction: str, with_mod: bool) -> str | None:
+    def action_for(self, direction: str, with_mod: bool) -> list[str]:
         table = self.mod_actions if with_mod else self.actions
-        return self.resolve(table.get(direction, "none"))
+        return self.resolve(table.get(direction, "none"), direction, table)
 
-    def resolve(self, action: str) -> str | None:
-        """Config value -> shortcut/command, or None for 'do nothing'."""
-        if not action or action == "none":
-            return None
-        if action == "overview":
-            return self.overview_shortcut
-        return action
+    def resolve(self, action, direction: str = "", table: dict | None = None
+                ) -> list[str]:
+        """Config value -> the list of things to run, in order.
+
+        A value may be one action, a TOML array, or a "first | then" string.
+        KWin has no diagonal desktop switch, so "combine" stands for the two
+        component directions of a diagonal -- which keeps a diagonal doing
+        exactly what its two straight flicks would do, whichever way round
+        the inversion settings put them.
+        """
+        items = action if isinstance(action, list) else str(action).split("|")
+        out: list[str] = []
+        for item in items:
+            item = item.strip() if isinstance(item, str) else item
+            if not item or item == "none":
+                continue
+            if item == "combine":
+                if "_" in direction and table is not None:
+                    for part in direction.split("_"):
+                        out.extend(self.resolve(table.get(part, "none"), part))
+                continue
+            out.append(self.overview_shortcut if item == "overview" else item)
+        return out
 
     @classmethod
     def load(cls, path: str) -> "Config":
@@ -229,6 +249,14 @@ class Config:
 
 
 # ---------------------------------------------------------------- actions
+
+
+async def run_actions(actions, verbose: bool, gap: float = 0.1):
+    """Run a chain in order, pausing between steps."""
+    for i, action in enumerate(actions):
+        if i:
+            await asyncio.sleep(gap)
+        await run_action(action, verbose)
 
 
 async def run_action(action: str, verbose: bool):
@@ -527,14 +555,15 @@ class DeviceWorker:
     def _flick(self, direction: str, with_mod: bool):
         """Run the flick action, snapping the window if the modifier is held."""
         cfg = self.cfg
-        action = cfg.action_for(direction, with_mod)
+        actions = cfg.action_for(direction, with_mod)
         if self.verbose:
             log(f"[{self.dev.name}] flick {direction}"
                 f"{' + ' + cfg.mod_name if with_mod else ''}"
-                f"{'' if action else ' (unbound)'}")
-        if not action:
+                f"{'' if actions else ' (unbound)'}")
+        if not actions:
             return
-        asyncio.ensure_future(run_action(action, self.verbose))
+        asyncio.ensure_future(
+            run_actions(actions, self.verbose, cfg.chain_delay))
         if with_mod and cfg.mod_defuse and self.defuser:
             self.defuser.tap()
 
@@ -619,9 +648,9 @@ class DeviceWorker:
                     await asyncio.sleep(0.06)
                 self._replay(swallowed)
             return
-        target = self.cfg.resolve(action)
-        if target:
-            await run_action(target, self.verbose)
+        targets = self.cfg.resolve(action)
+        if targets:
+            await run_actions(targets, self.verbose, self.cfg.chain_delay)
 
     def _replay(self, swallowed):
         """Re-send the button's original action through the clone."""
