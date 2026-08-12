@@ -1,0 +1,47 @@
+# deskflick configuration
+# Copy to ~/.config/deskflick/config.toml and edit. Restart deskflick to apply:
+#   systemctl --user restart deskflick
+
+[trigger]
+# Which mouse button starts a gesture while held.
+# Common values: "BTN_SIDE" (back / button 4), "BTN_EXTRA" (forward / button 5),
+# "BTN_MIDDLE". Any evdev key name or numeric code works.
+button = "BTN_SIDE"
+
+# A quick tap (press+release without moving) is replayed as a normal click,
+# so the button keeps working as "back" in browsers etc.
+tap_passthrough = true
+tap_timeout_ms = 350
+
+[gesture]
+# How far (in mouse counts, ~pixels) you must push before a switch fires.
+# Lower = more sensitive.
+threshold = 150
+
+# Keep switching desktops if you keep pushing while holding the button.
+repeat = true
+
+# Minimum time between two switches in one gesture.
+cooldown_ms = 180
+
+# Freeze the pointer while the trigger button is held.
+lock_pointer = true
+
+# Flip directions if you prefer "natural" scrolling semantics.
+invert_x = false
+invert_y = false
+
+[actions]
+# Each direction runs a KWin global shortcut by name (see:
+#   gdbus call --session --dest org.kde.kglobalaccel \
+#     --object-path /component/kwin \
+#     --method org.kde.kglobalaccel.Component.shortcutNames
+# ), or an arbitrary command with the "cmd:" prefix.
+left  = "Switch One Desktop to the Left"
+right = "Switch One Desktop to the Right"
+up    = "Switch One Desktop Up"
+down  = "Switch One Desktop Down"
+
+# Examples:
+# up   = "Toggle Overview"
+# down = "cmd:notify-send 'flick!'"

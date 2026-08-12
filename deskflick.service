@@ -1,0 +1,12 @@
+[Unit]
+Description=deskflick - flick your mouse to switch KDE virtual desktops
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/env deskflick
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
