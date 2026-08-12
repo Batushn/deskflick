@@ -209,6 +209,7 @@ class CaptureDialog(QtWidgets.QDialog):
     def done(self, r):
         if self.evdev_thread.isRunning():
             self.evdev_thread.requestInterruption()
+            self.evdev_thread.wait(2000)
         super().done(r)
 
 
