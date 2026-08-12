@@ -5,6 +5,11 @@ PartOf=graphical-session.target
 
 [Service]
 ExecStart=/usr/bin/env deskflick
+# Safety net: whatever killed the daemon (including SIGKILL), make sure no
+# mouse button is left logically pressed in the compositor.
+ExecStopPost=-/usr/bin/env deskflick --unstick
+KillSignal=SIGTERM
+TimeoutStopSec=10
 Restart=on-failure
 RestartSec=2
 

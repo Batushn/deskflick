@@ -51,8 +51,61 @@ DEFAULT_CONFIG = {
 }
 
 
+RESCUE_BUTTONS = ("BTN_LEFT", "BTN_RIGHT", "BTN_MIDDLE", "BTN_SIDE",
+                  "BTN_EXTRA", "BTN_FORWARD", "BTN_BACK", "BTN_TASK")
+
+
 def log(*args):
     print(*args, flush=True)
+
+
+def unstick(quiet: bool = False) -> bool:
+    """Clear mouse buttons the compositor may think are still pressed.
+
+    Emits a lone release for every mouse button from a throwaway virtual
+    device. A release with no matching press is a no-op for the compositor,
+    so this is safe to run at any time; if a button *was* stuck (e.g. after
+    an unclean shutdown mid-click), this is what frees it.
+    """
+    codes = [ecodes.ecodes[n] for n in RESCUE_BUTTONS]
+    try:
+        ui = UInput({ecodes.EV_KEY: codes,
+                     ecodes.EV_REL: [ecodes.REL_X, ecodes.REL_Y]},
+                    name="deskflick-unstick")
+    except OSError as e:
+        if not quiet:
+            log(f"deskflick: cannot open /dev/uinput ({e})")
+        return False
+    try:
+        time.sleep(0.8)  # let the compositor notice the new device
+        for code in codes:
+            ui.write(ecodes.EV_KEY, code, 0)
+            ui.syn()
+            time.sleep(0.02)
+        time.sleep(0.3)
+    finally:
+        ui.close()
+    if not quiet:
+        log("deskflick: released all mouse buttons")
+    return True
+
+
+def any_button_held() -> bool:
+    for path in list_devices():
+        try:
+            dev = InputDevice(path)
+        except OSError:
+            continue
+        try:
+            if any(c in dev.capabilities().get(ecodes.EV_KEY, [])
+                   for c in (ecodes.BTN_LEFT, ecodes.BTN_RIGHT)) \
+                    and dev.active_keys():
+                return True
+        except OSError:
+            pass
+        finally:
+            dev.close()
+    return False
 
 
 class Config:
@@ -121,6 +174,7 @@ class DeviceWorker:
         self.cfg = cfg
         self.verbose = verbose
         self.ui = UInput.from_device(dev, name=dev.name + VIRTUAL_SUFFIX)
+        self.forwarded = set()  # button codes we passed through as pressed
         self.held = False
         self.gestured = False
         self.press_time = 0.0
@@ -130,6 +184,10 @@ class DeviceWorker:
 
     async def run(self):
         dev, ui, cfg = self.dev, self.ui, self.cfg
+        # Never grab mid-click: the compositor would have seen the press on
+        # the physical device and would get the release from our clone, and
+        # that button stays logically held forever.
+        await self._wait_until_idle()
         dev.grab()
         try:
             async for ev in dev.async_read_loop():
@@ -151,14 +209,68 @@ class DeviceWorker:
                         await self._maybe_fire()
                         if cfg.lock_pointer:
                             continue
+                if ev.type == ecodes.EV_KEY:
+                    if ev.value == 1:
+                        self.forwarded.add(ev.code)
+                    elif ev.value == 0:
+                        self.forwarded.discard(ev.code)
                 ui.write_event(ev)
         finally:
+            self.shutdown()
+
+    async def _wait_until_idle(self, timeout: float = 5.0):
+        """Wait until no button is physically held on the device."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
             try:
-                dev.ungrab()
+                if not self.dev.active_keys():
+                    return
             except OSError:
-                pass
-            ui.close()
-            dev.close()
+                return
+            await asyncio.sleep(0.05)
+
+    def shutdown(self):
+        """Release anything still held, then hand the device back.
+
+        Order matters: releases must reach the compositor through the clone
+        *before* it disappears, otherwise a button pressed at shutdown time
+        stays stuck (this is what used to break left click on restart).
+        """
+        try:
+            for code in sorted(self.forwarded):
+                self.ui.write(ecodes.EV_KEY, code, 0)
+            if self.forwarded:
+                self.ui.syn()
+                time.sleep(0.05)
+            self.forwarded.clear()
+        except OSError:
+            pass
+        # Anything physically held right now was swallowed by us (or arrives
+        # after the ungrab as a lone release); flush a release for it too.
+        try:
+            held = set(self.dev.active_keys())
+        except OSError:
+            held = set()
+        try:
+            for code in sorted(held):
+                self.ui.write(ecodes.EV_KEY, code, 0)
+            if held:
+                self.ui.syn()
+                time.sleep(0.05)
+        except OSError:
+            pass
+        try:
+            self.dev.ungrab()
+        except OSError:
+            pass
+        try:
+            self.ui.close()
+        except OSError:
+            pass
+        try:
+            self.dev.close()
+        except OSError:
+            pass
 
     async def _on_trigger(self, value: int):
         if value == 1:  # press: swallow, start tracking
@@ -298,22 +410,32 @@ def main():
                         help="list input devices and exit")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="log every gesture")
+    parser.add_argument("--unstick", action="store_true",
+                        help="release all mouse buttons and exit "
+                             "(rescue command if a click ever gets stuck)")
     args = parser.parse_args()
 
     if args.list_devices:
         cmd_list_devices()
         return
 
+    if args.unstick:
+        sys.exit(0 if unstick() else 1)
+
     cfg = Config.load(args.config)
     devices = find_pointer_devices(cfg)
     if not devices:
-        sys.exit(
-            "deskflick: no pointer device with the trigger button found.\n"
-            "Check permissions (input group) or your [trigger] button setting.\n"
-            "Try: deskflick --list-devices"
-        )
+        # Don't exit: systemd would restart us in a tight loop, and every
+        # cycle grabs and drops devices. Just wait for one to show up.
+        log("deskflick: no pointer device with the trigger button yet — "
+            "waiting. (permissions? `deskflick --list-devices`)")
     for d in devices:
         d.close()
+
+    # Heal any button left stuck by a previous unclean exit, but only while
+    # nothing is actually being pressed right now.
+    if not any_button_held():
+        unstick(quiet=True)
 
     loop = asyncio.new_event_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -332,6 +454,8 @@ def main():
             loop.run_until_complete(
                 asyncio.gather(*tasks, return_exceptions=True))
         loop.close()
+        if not any_button_held():
+            unstick(quiet=True)
 
 
 if __name__ == "__main__":

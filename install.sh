@@ -23,12 +23,9 @@ if ! python3 -c "import PySide6" 2>/dev/null; then
 fi
 sudo udevadm control --reload-rules
 sudo udevadm trigger /dev/uinput 2>/dev/null || true
-
-if ! id -nG "$USER" | grep -qw input; then
-    echo ":: Adding $USER to the input group (takes effect after re-login)"
-    sudo usermod -aG input "$USER"
-    NEED_RELOGIN=1
-fi
+# Apply the mouse ACL to devices that are already plugged in
+sudo udevadm trigger --subsystem-match=input --action=change 2>/dev/null || true
+sudo udevadm settle 2>/dev/null || true
 
 echo ":: Installing user config and systemd service"
 mkdir -p ~/.config/deskflick
@@ -38,13 +35,24 @@ cp deskflick.service ~/.config/systemd/user/deskflick.service
 systemctl --user daemon-reload
 systemctl --user enable deskflick.service
 
-if [ "${NEED_RELOGIN:-0}" = 1 ]; then
-    echo
-    echo "!! You were added to the 'input' group."
-    echo "!! Log out and back in, then run: systemctl --user start deskflick"
+echo ":: Checking mouse access"
+if deskflick --list-devices | grep -q "pointer"; then
+    echo "   ok — mouse devices are readable"
 else
-    systemctl --user restart deskflick.service
+    echo "   !! No readable pointer device yet."
+    echo "   !! Unplug/replug the mouse, or log out and back in, then run:"
+    echo "   !!   systemctl --user restart deskflick"
+fi
+
+systemctl --user restart deskflick.service
+sleep 1
+if [ "$(systemctl --user is-active deskflick)" = active ]; then
     echo
     echo ":: deskflick is running. Hold mouse button 4 and flick!"
-    echo ":: Config: ~/.config/deskflick/config.toml"
+    echo ":: Config: ~/.config/deskflick/config.toml  (GUI: deskflick-ui)"
+    echo ":: If a click ever gets stuck: deskflick --unstick"
+else
+    echo
+    echo "!! Service did not start. Logs:"
+    journalctl --user -u deskflick -n 10 --no-pager
 fi

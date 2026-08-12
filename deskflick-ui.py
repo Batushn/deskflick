@@ -375,6 +375,11 @@ class Window(QtWidgets.QWidget):
         with open(CONFIG_PATH, "w") as f:
             f.write(dump_config(self.cfg))
 
+        # Small delay so the restart never lands while this very click is
+        # still being delivered.
+        QtCore.QTimer.singleShot(250, self._restart_service)
+
+    def _restart_service(self):
         subprocess.run(["systemctl", "--user", "restart", "deskflick"],
                        capture_output=True)
         QtCore.QTimer.singleShot(600, self.refresh_status)

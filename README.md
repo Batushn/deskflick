@@ -35,10 +35,11 @@ cd deskflick
 
 The installer:
 
-1. copies `deskflick` to `/usr/local/bin`,
-2. installs a udev rule so the `input` group can use `/dev/uinput`,
-3. adds you to the `input` group (log out & back in if it says so),
-4. enables + starts the `deskflick` systemd **user** service.
+1. copies `deskflick` and `deskflick-ui` to `/usr/local/bin`,
+2. installs a udev rule granting access to `/dev/uinput` and an ACL on
+   **mouse** devices for the logged-in user (keyboards excluded, no group
+   change and no re-login needed),
+3. enables + starts the `deskflick` systemd **user** service.
 
 Dependency: `python-evdev` (Arch: `sudo pacman -S python-evdev`).
 
@@ -89,11 +90,16 @@ gdbus call --session --dest org.kde.kglobalaccel --object-path /component/kwin -
 ```bash
 deskflick --list-devices      # can deskflick see your mouse?
 deskflick -v                  # run in foreground, log every gesture
+deskflick --unstick           # rescue: release all mouse buttons
 journalctl --user -u deskflick -f
 ```
 
-- **"no readable input devices"** — you're not in the `input` group yet;
-  log out and back in after installing.
+- **A click feels stuck** — run `deskflick --unstick`. Since 0.3.0 this
+  shouldn't happen: deskflick refuses to grab a mouse while a button is
+  held, always flushes releases through the clone before letting go, and
+  the service runs `--unstick` after every stop, even a kill.
+- **"no readable input devices"** — the udev ACL hasn't been applied yet;
+  unplug/replug the mouse or re-run `./install.sh`.
 - Desktops don't wrap by default — that's KWin's *Navigation wraps around*
   setting (System Settings → Window Management → Virtual Desktops).
 
