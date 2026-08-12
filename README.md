@@ -74,9 +74,9 @@ hold_ms = 500
 [gesture]
 threshold = 150           # lower = more sensitive
 repeat = true             # keep pushing = keep switching
-lock_pointer = true       # freeze the cursor during a gesture
-invert_x = false
-invert_y = false
+lock_pointer = false      # freeze the cursor during a gesture
+invert_x = true           # desktop switching only
+invert_y = true
 
 [actions]                 # any KWin shortcut name, or "cmd:<shell command>"
 left  = "Switch One Desktop to the Left"
@@ -88,7 +88,10 @@ down  = "Switch One Desktop Down"
 shortcut = "ExposeAll"    # used when tap = "overview"
 
 [modifier]                # hold Meta too -> act on the window, not the desktop
-enabled = false
+enabled = true
+invert_x = false          # separate from [gesture]: snapping follows the hand
+invert_y = false
+suppress_press = true     # no tap/double/hold while the modifier is down
 key = "KEY_LEFTMETA"
 left = "Window Quick Tile Left"
 right = "Window Quick Tile Right"

@@ -39,20 +39,22 @@ TAP_MODES = ("passthrough", "overview", "none")
 DEFAULT_CONFIG = {
     "trigger": {
         "button": "BTN_SIDE",
-        "tap": "passthrough",
-        "double": "none",
-        "hold": "none",
+        "tap": "Show Desktop",
+        "double": "Window Maximize",
+        "hold": "overview",
         "tap_timeout_ms": 350,
         "double_ms": 250,
-        "hold_ms": 500,
+        "hold_ms": 200,
     },
     "gesture": {
         "threshold": 150,
         "repeat": True,
         "cooldown_ms": 180,
-        "lock_pointer": True,
-        "invert_x": False,
-        "invert_y": False,
+        "lock_pointer": False,
+        # Pushing the mouse feels like dragging the desktop under it, so the
+        # view goes the other way. Flip either axis if you disagree.
+        "invert_x": True,
+        "invert_y": True,
     },
     "actions": {
         "left": "Switch One Desktop to the Left",
@@ -64,12 +66,19 @@ DEFAULT_CONFIG = {
         "shortcut": "ExposeAll",
     },
     "modifier": {
-        "enabled": False,
+        "enabled": True,
         "key": "KEY_LEFTMETA",
         "left": "Window Quick Tile Left",
         "right": "Window Quick Tile Right",
         "up": "Window Quick Tile Top",
         "down": "Window Quick Tile Bottom",
+        # Snapping follows the hand rather than the desktop metaphor, so it
+        # gets its own inversion instead of inheriting [gesture].
+        "invert_x": False,
+        "invert_y": False,
+        # While the modifier is down the button belongs to window management
+        # alone: no tap, double tap or long press.
+        "suppress_press": True,
         "defuse_launcher": True,
     },
 }
@@ -128,8 +137,11 @@ class Config:
         # lowercase "overview" (our keyword) must stay distinct from KWin's
         # own "Overview" shortcut.
         tap = str(get("trigger", "tap"))
-        # legacy keys from <= 0.3.0
-        if "tap" not in data.get("trigger", {}):
+        # Migrate <= 0.3.0 layout, but only when those keys are really there:
+        # an absent [trigger] must fall through to the default, not to this.
+        legacy = ("tap_passthrough" in data.get("trigger", {})
+                  or "enabled" in data.get("overview", {}))
+        if legacy and "tap" not in data.get("trigger", {}):
             if data.get("overview", {}).get("enabled"):
                 tap = "overview"
             elif data.get("trigger", {}).get("tap_passthrough") is False:
@@ -168,6 +180,9 @@ class Config:
             d: data.get("modifier", {}).get(d, DEFAULT_CONFIG["modifier"][d])
             for d in ("left", "right", "up", "down")
         }
+        self.mod_invert_x = bool(get("modifier", "invert_x"))
+        self.mod_invert_y = bool(get("modifier", "invert_y"))
+        self.mod_suppress = bool(get("modifier", "suppress_press"))
         self.mod_defuse = bool(get("modifier", "defuse_launcher"))
 
     def resolve(self, action: str) -> str | None:
@@ -357,7 +372,8 @@ class Gesture:
         if task and not task.done():
             task.cancel()
 
-    def add_motion(self, code: int, value: int) -> str | None:
+    def add_motion(self, code: int, value: int, mod_held=None):
+        """Returns (direction, with_modifier), or None if nothing fires yet."""
         cfg = self.cfg
         if code == ecodes.REL_X:
             self.acc_x += value
@@ -372,20 +388,28 @@ class Gesture:
         if self.flicked and not cfg.repeat:
             return None
 
-        x = -self.acc_x if cfg.invert_x else self.acc_x
-        y = -self.acc_y if cfg.invert_y else self.acc_y
-        if abs(x) >= cfg.threshold and abs(x) >= abs(y):
-            direction = "right" if x > 0 else "left"
-        elif abs(y) >= cfg.threshold:
-            direction = "down" if y > 0 else "up"
-        else:
+        # Whether the threshold is crossed does not depend on inversion, so
+        # settle that first and only then ask about the modifier -- that keeps
+        # the keyboard query to once per flick instead of once per motion.
+        ax, ay = abs(self.acc_x), abs(self.acc_y)
+        if max(ax, ay) < cfg.threshold:
             return None
+
+        with_mod = bool(mod_held and mod_held())
+        invert_x = cfg.mod_invert_x if with_mod else cfg.invert_x
+        invert_y = cfg.mod_invert_y if with_mod else cfg.invert_y
+        x = -self.acc_x if invert_x else self.acc_x
+        y = -self.acc_y if invert_y else self.acc_y
+        if ax >= cfg.threshold and ax >= ay:
+            direction = "right" if x > 0 else "left"
+        else:
+            direction = "down" if y > 0 else "up"
 
         self.flicked = True
         self.consumed = True
         self.last_fire = now
         self.acc_x = self.acc_y = 0
-        return direction
+        return direction, with_mod
 
 
 # ---------------------------------------------------------------- worker
@@ -433,9 +457,9 @@ class DeviceWorker:
                     continue
 
                 if g.held and self.is_pointer and ev.type == ecodes.EV_REL:
-                    direction = g.add_motion(ev.code, ev.value)
-                    if direction:
-                        self._flick(direction)
+                    fired = g.add_motion(ev.code, ev.value, self._mod_held)
+                    if fired:
+                        self._flick(*fired)
                     if ev.code in (ecodes.REL_X, ecodes.REL_Y) and cfg.lock_pointer:
                         continue
 
@@ -448,10 +472,12 @@ class DeviceWorker:
         finally:
             self.shutdown()
 
-    def _flick(self, direction: str):
+    def _mod_held(self) -> bool:
+        return bool(self.cfg.mod_enabled and self.mods and self.mods.held())
+
+    def _flick(self, direction: str, with_mod: bool):
         """Run the flick action, snapping the window if the modifier is held."""
         cfg = self.cfg
-        with_mod = bool(cfg.mod_enabled and self.mods and self.mods.held())
         action = (cfg.mod_actions if with_mod else cfg.actions)[direction]
         if self.verbose:
             log(f"[{self.dev.name}] flick {direction}"
@@ -488,6 +514,15 @@ class DeviceWorker:
             g.double_armed = False
             return
 
+        # With the modifier down the button is for window management only.
+        if cfg.mod_suppress and self._mod_held():
+            g.double_armed = False
+            g.cancel(g.tap_task)
+            g.tap_task = None
+            if self.verbose:
+                log(f"[{self.dev.name}] tap ignored ({cfg.mod_name} held)")
+            return
+
         if g.double_armed:
             g.double_armed = False
             if self.verbose:
@@ -508,6 +543,9 @@ class DeviceWorker:
             return
         g = self.g
         if not g.held or g.consumed:
+            return
+        if self.cfg.mod_suppress and self._mod_held():
+            g.swallowed.clear()
             return
         g.consumed = True
         g.swallowed.clear()

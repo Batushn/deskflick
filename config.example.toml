@@ -16,9 +16,9 @@ button = "BTN_SIDE"
 #   "none"        — nothing
 #   any KWin shortcut name, e.g. "Toggle Overview" or "Window Maximize"
 #   "cmd:<shell command>", e.g. "cmd:notify-send hi"
-tap = "passthrough"      # one quick press
-double = "none"          # two quick presses
-hold = "none"            # button kept down without flicking
+tap = "Show Desktop"        # one quick press
+double = "Window Maximize"  # two quick presses
+hold = "overview"           # button kept down without flicking
 
 # A tap is only a tap if released within this long.
 tap_timeout_ms = 350
@@ -27,7 +27,7 @@ tap_timeout_ms = 350
 double_ms = 250
 # How long the button must stay down before `hold` fires. Flicking afterwards
 # still switches desktops.
-hold_ms = 500
+hold_ms = 200
 
 [gesture]
 # How far (in mouse counts, ~pixels) you must push before a switch fires.
@@ -41,11 +41,12 @@ repeat = true
 cooldown_ms = 180
 
 # Freeze the pointer while the trigger button is held.
-lock_pointer = true
+lock_pointer = false
 
-# Flip directions if you prefer "natural" scrolling semantics.
-invert_x = false
-invert_y = false
+# Pushing the mouse drags the desktop under it, so the view moves the other
+# way. These apply to desktop switching only — [modifier] has its own pair.
+invert_x = true
+invert_y = true
 
 [actions]
 # Each direction runs a KWin global shortcut by name (see:
@@ -74,7 +75,7 @@ shortcut = "ExposeAll"
 # Reading the keyboard's modifier state needs `input` group membership, so log
 # out and back in once after installing. Nothing but this one key's state is
 # ever looked at, and keyboards are not opened at all while this is false.
-enabled = false
+enabled = true
 key = "KEY_LEFTMETA"     # or KEY_LEFTCTRL / KEY_LEFTALT / KEY_LEFTSHIFT
                          # the right-hand twin of the key counts too
 
@@ -82,6 +83,15 @@ left  = "Window Quick Tile Left"
 right = "Window Quick Tile Right"
 up    = "Window Quick Tile Top"
 down  = "Window Quick Tile Bottom"
+
+# Snapping follows your hand rather than the desktop metaphor, so it gets its
+# own inversion instead of inheriting the one in [gesture].
+invert_x = false
+invert_y = false
+
+# While the modifier is down the button does window management only: tap,
+# double tap and press-and-hold are ignored, including the passthrough click.
+suppress_press = true
 
 # KWin opens the application launcher when Meta is released on its own, and
 # deskflick swallows the button that would normally prevent that. This taps

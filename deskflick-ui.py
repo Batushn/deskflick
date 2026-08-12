@@ -17,12 +17,12 @@ from PySide6 import QtCore, QtWidgets
 CONFIG_PATH = os.path.expanduser("~/.config/deskflick/config.toml")
 
 DEFAULTS = {
-    "trigger": {"button": "BTN_SIDE", "tap": "passthrough", "double": "none",
-                "hold": "none", "tap_timeout_ms": 350, "double_ms": 250,
-                "hold_ms": 500},
+    "trigger": {"button": "BTN_SIDE", "tap": "Show Desktop",
+                "double": "Window Maximize", "hold": "overview",
+                "tap_timeout_ms": 350, "double_ms": 250, "hold_ms": 200},
     "gesture": {
         "threshold": 150, "repeat": True, "cooldown_ms": 180,
-        "lock_pointer": True, "invert_x": False, "invert_y": False,
+        "lock_pointer": False, "invert_x": True, "invert_y": True,
     },
     "actions": {
         "left": "Switch One Desktop to the Left",
@@ -32,9 +32,10 @@ DEFAULTS = {
     },
     "overview": {"shortcut": "ExposeAll"},
     "modifier": {
-        "enabled": False, "key": "KEY_LEFTMETA", "defuse_launcher": True,
+        "enabled": True, "key": "KEY_LEFTMETA", "defuse_launcher": True,
         "left": "Window Quick Tile Left", "right": "Window Quick Tile Right",
         "up": "Window Quick Tile Top", "down": "Window Quick Tile Bottom",
+        "invert_x": False, "invert_y": False, "suppress_press": True,
     },
 }
 
@@ -414,8 +415,11 @@ class Window(QtWidgets.QWidget):
 
         self.invert_x = QtWidgets.QCheckBox("Invert left/right")
         self.invert_x.setChecked(bool(self.cfg["gesture"]["invert_x"]))
+        self.invert_x.setToolTip("Applies to desktop switching only — the "
+                                 "modifier gestures have their own.")
         self.invert_y = QtWidgets.QCheckBox("Invert up/down")
         self.invert_y.setChecked(bool(self.cfg["gesture"]["invert_y"]))
+        self.invert_y.setToolTip(self.invert_x.toolTip())
         irow = QtWidgets.QHBoxLayout()
         irow.addWidget(self.invert_x)
         irow.addWidget(self.invert_y)
@@ -467,12 +471,31 @@ class Window(QtWidgets.QWidget):
             self.mod_combos[direction] = combo
             mod_form.addRow(f"{arrow} {direction.capitalize()}:", combo)
 
+        self.mod_invert_x = QtWidgets.QCheckBox("Invert left/right")
+        self.mod_invert_x.setChecked(bool(self.cfg["modifier"]["invert_x"]))
+        self.mod_invert_y = QtWidgets.QCheckBox("Invert up/down")
+        self.mod_invert_y.setChecked(bool(self.cfg["modifier"]["invert_y"]))
+        mrow = QtWidgets.QHBoxLayout()
+        mrow.addWidget(self.mod_invert_x)
+        mrow.addWidget(self.mod_invert_y)
+        mod_form.addRow(mrow)
+
+        self.mod_suppress = QtWidgets.QCheckBox(
+            "Ignore tap, double tap and hold while the modifier is down")
+        self.mod_suppress.setChecked(bool(self.cfg["modifier"]["suppress_press"]))
+        self.mod_suppress.setToolTip(
+            "With this on, the button does window management only while the "
+            "modifier is held — no click, no launcher, nothing else fires.")
+        mod_form.addRow(self.mod_suppress)
+
         self.mod_defuse = QtWidgets.QCheckBox(
             "Keep a held Meta from opening the application launcher")
         self.mod_defuse.setChecked(bool(self.cfg["modifier"]["defuse_launcher"]))
         mod_form.addRow(self.mod_defuse)
 
-        for widget in (self.mod_key, self.mod_defuse, *self.mod_combos.values()):
+        for widget in (self.mod_key, self.mod_defuse, self.mod_suppress,
+                       self.mod_invert_x, self.mod_invert_y,
+                       *self.mod_combos.values()):
             self.mod_enabled.toggled.connect(widget.setEnabled)
             widget.setEnabled(self.mod_enabled.isChecked())
         layout.addWidget(mod_box)
@@ -632,6 +655,9 @@ class Window(QtWidgets.QWidget):
         self.cfg["modifier"]["enabled"] = self.mod_enabled.isChecked()
         self.cfg["modifier"]["key"] = self.mod_key.currentData()
         self.cfg["modifier"]["defuse_launcher"] = self.mod_defuse.isChecked()
+        self.cfg["modifier"]["invert_x"] = self.mod_invert_x.isChecked()
+        self.cfg["modifier"]["invert_y"] = self.mod_invert_y.isChecked()
+        self.cfg["modifier"]["suppress_press"] = self.mod_suppress.isChecked()
         for direction, combo in self.mod_combos.items():
             self.cfg["modifier"][direction] = combo.currentText().strip()
 
