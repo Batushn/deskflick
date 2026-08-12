@@ -6,9 +6,10 @@ virtual desktops — or snap the window you're looking at.**
 [![Release](https://img.shields.io/github/v/release/Batushn/deskflick?style=flat-square)](https://github.com/Batushn/deskflick/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Wayland & X11](https://img.shields.io/badge/Wayland-%26%20X11-informational?style=flat-square)](#how-it-works)
+[![Vibe coded with Claude](https://img.shields.io/badge/vibe%20coded%20with-Claude-8A62E8?style=flat-square)](#how-this-was-built)
 
 <p align="center">
-  <img src="docs/demo-desktops.gif" alt="Holding a mouse button and flicking to switch KDE virtual desktops" width="640">
+  <img src="docs/demo-desktops.gif" alt="Holding a mouse button and flicking to switch KDE virtual desktops" width="560">
 </p>
 
 Your mouse has a spare button — the "back" thumb button on most mice. deskflick
@@ -174,6 +175,19 @@ key stream, and opens nothing at all when the feature is off.
 ```bash
 ./uninstall.sh
 ```
+
+## How this was built
+
+Vibe coded with [Claude Code](https://claude.com/claude-code): every line of
+this was written by Claude, from an idea described out loud — "I want to hold
+mouse button 4 and flick between desktops" — and then shaped request by
+request, bug report by bug report, against real hardware.
+
+Worth knowing if you are reading the source or sending a patch: the whole
+thing is two Python files, and the sharp edges it hit along the way are
+recorded in the commit messages, which explain *why* rather than what. The
+udev rule is numbered 71 for a reason. The gesture is judged on `SYN_REPORT`
+for a reason. Those reasons cost real debugging.
 
 ## License
 

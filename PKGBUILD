@@ -1,6 +1,6 @@
 # Maintainer: Batuhan Sahin <mrbatuhansahin@gmail.com>
 pkgname=deskflick
-pkgver=0.9.1
+pkgver=0.9.2
 pkgrel=1
 pkgdesc="Hold a mouse button and flick to switch KDE Plasma virtual desktops (Wayland & X11)"
 arch=('any')
