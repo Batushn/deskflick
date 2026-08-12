@@ -91,6 +91,7 @@ gdbus call --session --dest org.kde.kglobalaccel --object-path /component/kwin -
 
 ```bash
 deskflick --list-devices      # can deskflick see your mouse?
+deskflick --watch             # press a button, see its exact name
 deskflick -v                  # run in foreground, log every gesture
 deskflick --unstick           # rescue: release all mouse buttons
 journalctl --user -u deskflick -f

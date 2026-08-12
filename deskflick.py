@@ -521,6 +521,39 @@ def cmd_list_devices(cfg: Config | None = None):
         dev.close()
 
 
+def cmd_watch():
+    """Print button/key names as they are pressed, to find a trigger by hand."""
+    import select
+    devices = []
+    for path in list_devices():
+        try:
+            dev = InputDevice(path)
+        except OSError:
+            continue
+        if ecodes.EV_KEY in dev.capabilities():
+            devices.append(dev)
+        else:
+            dev.close()
+    if not devices:
+        sys.exit("deskflick: no readable input devices — re-run install.sh")
+    print("Press buttons (Ctrl+C to stop). Names printed here are exactly "
+          "what belongs in the config's `button =`.")
+    try:
+        while True:
+            for dev in select.select(devices, [], [])[0]:
+                try:
+                    for ev in dev.read():
+                        if ev.type == ecodes.EV_KEY and ev.value == 1:
+                            print(f"{key_name(ev.code):<14} {dev.name}")
+                except OSError:
+                    pass
+    except KeyboardInterrupt:
+        print()
+    finally:
+        for dev in devices:
+            dev.close()
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="deskflick",
@@ -535,6 +568,8 @@ def main():
                         help="list input devices and exit")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="log every gesture")
+    parser.add_argument("-w", "--watch", action="store_true",
+                        help="print button names as you press them, then exit")
     parser.add_argument("--unstick", action="store_true",
                         help="release all mouse buttons and exit "
                              "(rescue command if a click ever gets stuck)")
@@ -542,6 +577,10 @@ def main():
 
     if args.unstick:
         sys.exit(0 if unstick() else 1)
+
+    if args.watch:
+        cmd_watch()
+        return
 
     cfg = Config.load(args.config)
 

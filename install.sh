@@ -15,15 +15,17 @@ echo ":: Installing binaries (sudo needed for /usr/local/bin and udev rule)"
 sudo install -Dm755 deskflick.py /usr/local/bin/deskflick
 sudo install -Dm755 deskflick-ui.py /usr/local/bin/deskflick-ui
 sudo install -Dm644 deskflick.desktop /usr/local/share/applications/deskflick.desktop
-sudo rm -f /etc/udev/rules.d/99-deskflick-uinput.rules   # pre-0.4.0 name: sorted too late to work
-sudo install -Dm644 60-deskflick.rules /etc/udev/rules.d/60-deskflick.rules
+# Earlier names sorted wrong and never applied: 99- ran after uaccess,
+# 60-deskflick ran before ID_INPUT_MOUSE was set.
+sudo rm -f /etc/udev/rules.d/99-deskflick-uinput.rules /etc/udev/rules.d/60-deskflick.rules
+sudo install -Dm644 71-deskflick.rules /etc/udev/rules.d/71-deskflick.rules
 
 if ! python3 -c "import PySide6" 2>/dev/null; then
     echo "note: PySide6 not found — the deskflick-ui settings window needs it."
     echo "  Arch: sudo pacman -S pyside6"
 fi
 sudo udevadm control --reload-rules
-sudo udevadm trigger /dev/uinput 2>/dev/null || true
+sudo udevadm trigger --name-match=uinput 2>/dev/null || true
 # Apply the mouse ACL to devices that are already plugged in
 sudo udevadm trigger --subsystem-match=input --action=change 2>/dev/null || true
 sudo udevadm settle 2>/dev/null || true
@@ -46,12 +48,14 @@ systemctl --user daemon-reload
 systemctl --user enable deskflick.service
 
 echo ":: Checking mouse access"
-if deskflick --list-devices | grep -q "pointer"; then
-    echo "   ok — mouse devices are readable"
+BLOCKED=$(deskflick --list-devices 2>/dev/null | grep "no access" || true)
+if [ -n "$BLOCKED" ]; then
+    echo "   !! These devices are still unreadable:"
+    echo "$BLOCKED" | sed 's/^/      /'
+    echo "   !! If your mouse is in that list, unplug and replug it (or log"
+    echo "   !! out and back in), then: systemctl --user restart deskflick"
 else
-    echo "   !! No readable pointer device yet."
-    echo "   !! Unplug/replug the mouse, or log out and back in, then run:"
-    echo "   !!   systemctl --user restart deskflick"
+    echo "   ok — every input device is readable"
 fi
 
 systemctl --user restart deskflick.service

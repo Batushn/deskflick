@@ -118,13 +118,17 @@ def pretty_key(name: str) -> str:
 # ------------------------------------------------------------------ capture
 
 
+# Qt numbers extra buttons in the order the evdev codes appear, starting at
+# BTN_SIDE (0x113) -- so ExtraButton1/2/3/4/5 are SIDE, EXTRA, FORWARD, BACK,
+# TASK. BackButton/ForwardButton/TaskButton are aliases for the first three.
+# Only a fallback: evdev capture below is authoritative.
 QT_BUTTON_MAP = {
-    QtCore.Qt.MouseButton.BackButton: "BTN_SIDE",      # button 4
-    QtCore.Qt.MouseButton.ForwardButton: "BTN_EXTRA",  # button 5
     QtCore.Qt.MouseButton.MiddleButton: "BTN_MIDDLE",
-    QtCore.Qt.MouseButton.TaskButton: "BTN_TASK",
-    QtCore.Qt.MouseButton.ExtraButton4: "BTN_FORWARD",
-    QtCore.Qt.MouseButton.ExtraButton5: "BTN_BACK",
+    QtCore.Qt.MouseButton.BackButton: "BTN_SIDE",       # ExtraButton1, 0x113
+    QtCore.Qt.MouseButton.ForwardButton: "BTN_EXTRA",   # ExtraButton2, 0x114
+    QtCore.Qt.MouseButton.TaskButton: "BTN_FORWARD",    # ExtraButton3, 0x115
+    QtCore.Qt.MouseButton.ExtraButton4: "BTN_BACK",     # 0x116
+    QtCore.Qt.MouseButton.ExtraButton5: "BTN_TASK",     # 0x117
 }
 
 
@@ -157,7 +161,10 @@ class EvdevCapture(QtCore.QThread):
             except OSError:
                 unreadable += 1
                 continue
-            if ecodes.EV_KEY in dev.capabilities() and "[deskflick]" not in dev.name:
+            # deskflick's own clones are included on purpose: while the daemon
+            # holds the real device, the clone is where the true evdev codes
+            # still show up.
+            if ecodes.EV_KEY in dev.capabilities():
                 devices.append(dev)
             else:
                 dev.close()
@@ -241,9 +248,12 @@ class CaptureDialog(QtWidgets.QDialog):
     def mousePressEvent(self, event):
         name = QT_BUTTON_MAP.get(event.button())
         if name:
-            # Give evdev a moment: it knows whether this button also fires a
-            # macro, which Qt cannot see.
-            QtCore.QTimer.singleShot(200, lambda: self._finish(name, ""))
+            # evdev wins if it answers: it reports the exact code and the
+            # device, and it sees macro keys Qt never receives.
+            QtCore.QTimer.singleShot(
+                450, lambda: self._finish(
+                    name, "Detected through Qt — install permissions are "
+                          "incomplete, so the exact device is unknown."))
         event.accept()
 
     def _on_evdev(self, first: str, combo: str, device: str):
@@ -448,7 +458,52 @@ class Window(QtWidgets.QWidget):
     def refresh_status(self):
         self.status.setText(self.deskflick_state())
 
+    def available_buttons(self) -> dict[str, str]:
+        """Button name -> device that reports it, across readable devices."""
+        try:
+            from evdev import InputDevice, ecodes, list_devices
+        except ImportError:
+            return {}
+        found = {}
+        for path in list_devices():
+            try:
+                dev = InputDevice(path)
+            except OSError:
+                continue
+            if "[deskflick]" not in dev.name:
+                for code in dev.capabilities().get(ecodes.EV_KEY, []):
+                    name = ecodes.bytype[ecodes.EV_KEY].get(code)
+                    if isinstance(name, (list, tuple)):
+                        name = next((n for n in name if n.startswith("BTN_")),
+                                    name[0])
+                    if name and name.startswith("BTN_"):
+                        found.setdefault(name, dev.name)
+            dev.close()
+        return found
+
+    def confirm_unknown_button(self, button: str) -> bool:
+        available = self.available_buttons()
+        if not available or button in available:
+            return True
+        listing = "\n".join(f"  • {n} — {d}" for n, d in sorted(available.items())
+                            if n not in ("BTN_LEFT", "BTN_RIGHT"))
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+        box.setWindowTitle("deskflick")
+        box.setText(f"No device reports <b>{button}</b>.")
+        box.setInformativeText(
+            "deskflick will not be able to intercept it, so the button will "
+            "keep doing whatever it does today.\n\n"
+            "Buttons your hardware actually reports:\n" + listing)
+        box.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Save |
+                               QtWidgets.QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QtWidgets.QMessageBox.StandardButton.Cancel)
+        return box.exec() == QtWidgets.QMessageBox.StandardButton.Save
+
     def save(self):
+        button = self.current_button()
+        if button.startswith("BTN_") and not self.confirm_unknown_button(button):
+            return
         self.cfg["trigger"]["button"] = self.current_button()
         self.cfg["trigger"]["tap"] = self.tap_combo.currentData()
         self.cfg["gesture"]["threshold"] = self.threshold.value()

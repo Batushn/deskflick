@@ -1,14 +1,14 @@
 # deskflick device permissions.
 #
-# NOTE: this file must sort BEFORE 73-seat-late.rules, which is what runs the
-# `uaccess` builtin. A 99- prefix is too late and the ACL is never applied.
+# The number matters twice over: this file must sort AFTER 60-input-id.rules,
+# which is what sets ID_INPUT_MOUSE, and BEFORE 73-seat-late.rules, which runs
+# the `uaccess` builtin. Miss either side and the ACL is silently never
+# applied.
 
 # 1) Creating the virtual pointer clone needs /dev/uinput.
 KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"
 
 # 2) Reading the physical mouse. Rather than requiring `input` group membership
 #    (which needs a full re-login and also grants access to keyboards), grant an
-#    ACL to the user logged in at the seat -- for pointing devices and for the
-#    extra HID interfaces of those same devices, which is where mice with
-#    onboard profiles send their macro keys.
+#    ACL to the user logged in at the seat, for pointing devices.
 SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_MOUSE}=="1", TAG+="uaccess"
