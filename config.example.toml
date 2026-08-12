@@ -34,6 +34,14 @@ hold_ms = 200
 # Lower = more sensitive.
 threshold = 150
 
+# Recognise diagonal flicks. `diagonal_ratio` is how square the movement has
+# to be: the smaller axis must reach this fraction of the larger one. 0.5
+# accepts roughly 27°-63°, 0.8 demands close to a true 45°. A diagonal with
+# nothing bound to it falls back to its dominant direction, so leaving the
+# corners unbound below costs you nothing.
+diagonals = true
+diagonal_ratio = 0.5
+
 # Keep switching desktops if you keep pushing while holding the button.
 repeat = true
 
@@ -59,6 +67,13 @@ right = "Switch One Desktop to the Right"
 up    = "Switch One Desktop Up"
 down  = "Switch One Desktop Down"
 
+# Diagonals. KWin has no diagonal desktop switch, so these start unbound and
+# fall back to the dominant direction until you put something here.
+up_left    = "none"
+up_right   = "none"
+down_left  = "none"
+down_right = "none"
+
 # Examples:
 # up   = "Toggle Overview"
 # down = "cmd:notify-send 'flick!'"
@@ -83,6 +98,12 @@ left  = "Window Quick Tile Left"
 right = "Window Quick Tile Right"
 up    = "Window Quick Tile Top"
 down  = "Window Quick Tile Bottom"
+
+# Corners, which is where diagonals earn their keep.
+up_left    = "Window Quick Tile Top Left"
+up_right   = "Window Quick Tile Top Right"
+down_left  = "Window Quick Tile Bottom Left"
+down_right = "Window Quick Tile Bottom Right"
 
 # Snapping follows your hand rather than the desktop metaphor, so it gets its
 # own inversion instead of inheriting the one in [gesture].

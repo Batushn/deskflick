@@ -23,21 +23,34 @@ DEFAULTS = {
     "gesture": {
         "threshold": 150, "repeat": True, "cooldown_ms": 180,
         "lock_pointer": False, "invert_x": True, "invert_y": True,
+        "diagonals": True, "diagonal_ratio": 0.5,
     },
     "actions": {
         "left": "Switch One Desktop to the Left",
         "right": "Switch One Desktop to the Right",
         "up": "Switch One Desktop Up",
         "down": "Switch One Desktop Down",
+        "up_left": "none", "up_right": "none",
+        "down_left": "none", "down_right": "none",
     },
     "overview": {"shortcut": "ExposeAll"},
     "modifier": {
         "enabled": True, "key": "KEY_LEFTMETA", "defuse_launcher": True,
         "left": "Window Quick Tile Left", "right": "Window Quick Tile Right",
         "up": "Window Quick Tile Top", "down": "Window Quick Tile Bottom",
+        "up_left": "Window Quick Tile Top Left",
+        "up_right": "Window Quick Tile Top Right",
+        "down_left": "Window Quick Tile Bottom Left",
+        "down_right": "Window Quick Tile Bottom Right",
         "invert_x": False, "invert_y": False, "suppress_press": True,
     },
 }
+
+FLICK_DIRECTIONS = [
+    ("left", "←"), ("right", "→"), ("up", "↑"), ("down", "↓"),
+    ("up_left", "↖"), ("up_right", "↗"),
+    ("down_left", "↙"), ("down_right", "↘"),
+]
 
 MODIFIER_KEYS = [
     ("KEY_LEFTMETA", "Meta / Super"),
@@ -121,6 +134,10 @@ def kwin_shortcut_names() -> list[str]:
         return sorted(set(re.findall(r"'((?:[^'\\]|\\.)*)'", out)))
     except Exception:
         return []
+
+
+def label_for(direction: str) -> str:
+    return direction.replace("_", "-").replace("-", " ").title()
 
 
 def pretty_key(name: str) -> str:
@@ -413,6 +430,29 @@ class Window(QtWidgets.QWidget):
         self.lock_pointer.setChecked(bool(self.cfg["gesture"]["lock_pointer"]))
         gest_form.addRow(self.lock_pointer)
 
+        self.diagonals = QtWidgets.QCheckBox("Recognise diagonal flicks")
+        self.diagonals.setChecked(bool(self.cfg["gesture"]["diagonals"]))
+        self.diagonals.setToolTip(
+            "A diagonal with nothing bound to it falls back to its dominant "
+            "direction, so this never swallows a sloppy flick.")
+        self.diagonal_ratio = QtWidgets.QSpinBox()
+        self.diagonal_ratio.setRange(20, 90)
+        self.diagonal_ratio.setSingleStep(5)
+        self.diagonal_ratio.setSuffix(" %")
+        self.diagonal_ratio.setValue(
+            int(round(float(self.cfg["gesture"]["diagonal_ratio"]) * 100)))
+        self.diagonal_ratio.setToolTip(
+            "How square the movement must be. 50% accepts roughly 27°-63°; "
+            "higher means you must aim closer to a true 45°.")
+        self.diagonals.toggled.connect(self.diagonal_ratio.setEnabled)
+        self.diagonal_ratio.setEnabled(self.diagonals.isChecked())
+        drow = QtWidgets.QHBoxLayout()
+        drow.addWidget(self.diagonals)
+        drow.addWidget(QtWidgets.QLabel("tolerance"))
+        drow.addWidget(self.diagonal_ratio)
+        drow.addStretch(1)
+        gest_form.addRow(drow)
+
         self.invert_x = QtWidgets.QCheckBox("Invert left/right")
         self.invert_x.setChecked(bool(self.cfg["gesture"]["invert_x"]))
         self.invert_x.setToolTip("Applies to desktop switching only — the "
@@ -430,14 +470,10 @@ class Window(QtWidgets.QWidget):
         act_box = QtWidgets.QGroupBox("Flick actions (KWin shortcut or cmd:<command>)")
         act_form = QtWidgets.QFormLayout(act_box)
         self.action_combos = {}
-        for direction, arrow in (("left", "←"), ("right", "→"),
-                                 ("up", "↑"), ("down", "↓")):
-            combo = QtWidgets.QComboBox()
-            combo.setEditable(True)
-            combo.addItems(shortcuts or [DEFAULTS["actions"][direction]])
-            combo.setCurrentText(str(self.cfg["actions"][direction]))
+        for direction, arrow in FLICK_DIRECTIONS:
+            combo = self._action_combo(shortcuts, str(self.cfg["actions"][direction]))
             self.action_combos[direction] = combo
-            act_form.addRow(f"{arrow} {direction.capitalize()}:", combo)
+            act_form.addRow(f"{arrow} {label_for(direction)}:", combo)
         layout.addWidget(act_box)
 
         # --- Modifier --------------------------------------------------
@@ -462,14 +498,10 @@ class Window(QtWidgets.QWidget):
         mod_form.addRow("Modifier:", self.mod_key)
 
         self.mod_combos = {}
-        for direction, arrow in (("left", "←"), ("right", "→"),
-                                 ("up", "↑"), ("down", "↓")):
-            combo = QtWidgets.QComboBox()
-            combo.setEditable(True)
-            combo.addItems(shortcuts or [DEFAULTS["modifier"][direction]])
-            combo.setCurrentText(str(self.cfg["modifier"][direction]))
+        for direction, arrow in FLICK_DIRECTIONS:
+            combo = self._action_combo(shortcuts, str(self.cfg["modifier"][direction]))
             self.mod_combos[direction] = combo
-            mod_form.addRow(f"{arrow} {direction.capitalize()}:", combo)
+            mod_form.addRow(f"{arrow} {label_for(direction)}:", combo)
 
         self.mod_invert_x = QtWidgets.QCheckBox("Invert left/right")
         self.mod_invert_x.setChecked(bool(self.cfg["modifier"]["invert_x"]))
@@ -647,10 +679,12 @@ class Window(QtWidgets.QWidget):
         self.cfg["gesture"]["threshold"] = self.threshold.value()
         self.cfg["gesture"]["repeat"] = self.repeat.isChecked()
         self.cfg["gesture"]["lock_pointer"] = self.lock_pointer.isChecked()
+        self.cfg["gesture"]["diagonals"] = self.diagonals.isChecked()
+        self.cfg["gesture"]["diagonal_ratio"] = self.diagonal_ratio.value() / 100
         self.cfg["gesture"]["invert_x"] = self.invert_x.isChecked()
         self.cfg["gesture"]["invert_y"] = self.invert_y.isChecked()
         for direction, combo in self.action_combos.items():
-            self.cfg["actions"][direction] = combo.currentText().strip()
+            self.cfg["actions"][direction] = self.combo_value(combo)
         self.cfg["overview"]["shortcut"] = self.overview_shortcut.currentText().strip()
         self.cfg["modifier"]["enabled"] = self.mod_enabled.isChecked()
         self.cfg["modifier"]["key"] = self.mod_key.currentData()
@@ -659,7 +693,7 @@ class Window(QtWidgets.QWidget):
         self.cfg["modifier"]["invert_y"] = self.mod_invert_y.isChecked()
         self.cfg["modifier"]["suppress_press"] = self.mod_suppress.isChecked()
         for direction, combo in self.mod_combos.items():
-            self.cfg["modifier"][direction] = combo.currentText().strip()
+            self.cfg["modifier"][direction] = self.combo_value(combo)
 
         os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
         with open(CONFIG_PATH, "w") as f:

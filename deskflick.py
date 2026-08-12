@@ -29,6 +29,9 @@ from evdev import InputDevice, UInput, ecodes, list_devices
 
 VIRTUAL_SUFFIX = " [deskflick]"
 
+DIRECTIONS = ("left", "right", "up", "down",
+              "up_left", "up_right", "down_left", "down_right")
+
 RESCUE_BUTTONS = ("BTN_LEFT", "BTN_RIGHT", "BTN_MIDDLE", "BTN_SIDE",
                   "BTN_EXTRA", "BTN_FORWARD", "BTN_BACK", "BTN_TASK")
 
@@ -50,6 +53,11 @@ DEFAULT_CONFIG = {
         "threshold": 150,
         "repeat": True,
         "cooldown_ms": 180,
+        # Recognise diagonal flicks. A flick counts as diagonal when the
+        # smaller axis reaches this fraction of the larger one -- 0.5 gives a
+        # roughly 27°-63° cone around each diagonal.
+        "diagonals": True,
+        "diagonal_ratio": 0.5,
         "lock_pointer": False,
         # Pushing the mouse feels like dragging the desktop under it, so the
         # view goes the other way. Flip either axis if you disagree.
@@ -61,6 +69,12 @@ DEFAULT_CONFIG = {
         "right": "Switch One Desktop to the Right",
         "up": "Switch One Desktop Up",
         "down": "Switch One Desktop Down",
+        # Unbound by default: an unbound diagonal falls back to its dominant
+        # axis, so switching desktops never stops working on a sloppy flick.
+        "up_left": "none",
+        "up_right": "none",
+        "down_left": "none",
+        "down_right": "none",
     },
     "overview": {
         "shortcut": "ExposeAll",
@@ -72,6 +86,10 @@ DEFAULT_CONFIG = {
         "right": "Window Quick Tile Right",
         "up": "Window Quick Tile Top",
         "down": "Window Quick Tile Bottom",
+        "up_left": "Window Quick Tile Top Left",
+        "up_right": "Window Quick Tile Top Right",
+        "down_left": "Window Quick Tile Bottom Left",
+        "down_right": "Window Quick Tile Bottom Right",
         # Snapping follows the hand rather than the desktop metaphor, so it
         # gets its own inversion instead of inheriting [gesture].
         "invert_x": False,
@@ -162,9 +180,13 @@ class Config:
         self.invert_x = bool(get("gesture", "invert_x"))
         self.invert_y = bool(get("gesture", "invert_y"))
 
+        self.diagonals = bool(get("gesture", "diagonals"))
+        self.diagonal_ratio = min(1.0, max(0.1, float(
+            get("gesture", "diagonal_ratio"))))
+
         self.actions = {
             d: data.get("actions", {}).get(d, DEFAULT_CONFIG["actions"][d])
-            for d in ("left", "right", "up", "down")
+            for d in DIRECTIONS
         }
         self.overview_shortcut = str(get("overview", "shortcut"))
 
@@ -178,12 +200,16 @@ class Config:
         self.mod_codes = {mod_code} | ({sibling} if sibling else set())
         self.mod_actions = {
             d: data.get("modifier", {}).get(d, DEFAULT_CONFIG["modifier"][d])
-            for d in ("left", "right", "up", "down")
+            for d in DIRECTIONS
         }
         self.mod_invert_x = bool(get("modifier", "invert_x"))
         self.mod_invert_y = bool(get("modifier", "invert_y"))
         self.mod_suppress = bool(get("modifier", "suppress_press"))
         self.mod_defuse = bool(get("modifier", "defuse_launcher"))
+
+    def action_for(self, direction: str, with_mod: bool) -> str | None:
+        table = self.mod_actions if with_mod else self.actions
+        return self.resolve(table.get(direction, "none"))
 
     def resolve(self, action: str) -> str | None:
         """Config value -> shortcut/command, or None for 'do nothing'."""
@@ -402,10 +428,18 @@ class Gesture:
         invert_y = cfg.mod_invert_y if with_mod else cfg.invert_y
         x = -self.acc_x if invert_x else self.acc_x
         y = -self.acc_y if invert_y else self.acc_y
-        if ax >= cfg.threshold and ax >= ay:
-            direction = "right" if x > 0 else "left"
-        else:
-            direction = "down" if y > 0 else "up"
+
+        horizontal = "right" if x > 0 else "left"
+        vertical = "down" if y > 0 else "up"
+        direction = None
+        if cfg.diagonals and min(ax, ay) >= max(ax, ay) * cfg.diagonal_ratio:
+            corner = f"{vertical}_{horizontal}"
+            # An unbound diagonal falls back to its dominant axis, so a sloppy
+            # flick still switches desktops instead of doing nothing.
+            if cfg.action_for(corner, with_mod):
+                direction = corner
+        if direction is None:
+            direction = horizontal if ax >= ay else vertical
 
         self.flicked = True
         self.consumed = True
@@ -480,10 +514,13 @@ class DeviceWorker:
     def _flick(self, direction: str, with_mod: bool):
         """Run the flick action, snapping the window if the modifier is held."""
         cfg = self.cfg
-        action = (cfg.mod_actions if with_mod else cfg.actions)[direction]
+        action = cfg.action_for(direction, with_mod)
         if self.verbose:
             log(f"[{self.dev.name}] flick {direction}"
-                f"{' + ' + cfg.mod_name if with_mod else ''}")
+                f"{' + ' + cfg.mod_name if with_mod else ''}"
+                f"{'' if action else ' (unbound)'}")
+        if not action:
+            return
         asyncio.ensure_future(run_action(action, self.verbose))
         if with_mod and cfg.mod_defuse and self.defuser:
             self.defuser.tap()

@@ -8,6 +8,7 @@ Hold your mouse's *back* button (button 4 / `BTN_SIDE`) and push the mouse:
 - ➡️ push right → desktop to the right
 - ⬆️ push up → desktop above
 - ⬇️ push down → desktop below
+- ↗️ push diagonally → its own action (corner snapping, with Meta held)
 
 Keep holding and keep pushing to fly across your whole grid. **Tap**,
 **double tap** and **press-and-hold** are separately bindable — by default a
@@ -78,6 +79,10 @@ lock_pointer = false      # freeze the cursor during a gesture
 invert_x = true           # desktop switching only
 invert_y = true
 
+[gesture]                 # diagonals, continued
+diagonals = true
+diagonal_ratio = 0.5      # smaller axis / larger axis; 0.8 = must aim near 45°
+
 [actions]                 # any KWin shortcut name, or "cmd:<shell command>"
 left  = "Switch One Desktop to the Left"
 right = "Switch One Desktop to the Right"
@@ -97,6 +102,7 @@ left = "Window Quick Tile Left"
 right = "Window Quick Tile Right"
 up = "Window Quick Tile Top"
 down = "Window Quick Tile Bottom"
+up_left = "Window Quick Tile Top Left"      # and the other three corners
 ```
 
 With `[modifier]` on, deskflick watches one key's state on your keyboards
