@@ -44,6 +44,10 @@ DEFAULT_CONFIG = {
         "up": "Switch One Desktop Up",
         "down": "Switch One Desktop Down",
     },
+    "overview": {
+        "enabled": False,
+        "shortcut": "ExposeAll",
+    },
 }
 
 
@@ -78,6 +82,9 @@ class Config:
             d: data.get("actions", {}).get(d, DEFAULT_CONFIG["actions"][d])
             for d in ("left", "right", "up", "down")
         }
+
+        self.overview_enabled = bool(get("overview", "enabled"))
+        self.overview_shortcut = str(get("overview", "shortcut"))
 
     @classmethod
     def load(cls, path: str) -> "Config":
@@ -159,15 +166,20 @@ class DeviceWorker:
             self.held = False
             tap = (
                 not self.gestured
-                and self.cfg.tap_passthrough
+                and (self.cfg.tap_passthrough or self.cfg.overview_enabled)
                 and time.monotonic() - self.press_time <= self.cfg.tap_timeout
             )
-            if tap:  # replay the click so "back" etc. still works
-                ui = self.ui
-                ui.write(ecodes.EV_KEY, self.cfg.button, 1)
-                ui.syn()
-                ui.write(ecodes.EV_KEY, self.cfg.button, 0)
-                ui.syn()
+            if tap:
+                if self.cfg.overview_enabled:
+                    # tap shows/hides all windows instead of clicking
+                    asyncio.ensure_future(
+                        run_action(self.cfg.overview_shortcut, self.verbose))
+                else:  # replay the click so "back" etc. still works
+                    ui = self.ui
+                    ui.write(ecodes.EV_KEY, self.cfg.button, 1)
+                    ui.syn()
+                    ui.write(ecodes.EV_KEY, self.cfg.button, 0)
+                    ui.syn()
         # value == 2 (autorepeat): swallow
 
     async def _maybe_fire(self):

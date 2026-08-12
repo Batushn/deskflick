@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=deskflick
+GenericName=Mouse Gesture Desktop Switcher
+Comment=Configure mouse-flick virtual desktop switching
+Exec=deskflick-ui
+Icon=input-mouse
+Terminal=false
+Categories=Settings;DesktopSettings;Qt;KDE;
+Keywords=mouse;gesture;virtual desktop;flick;

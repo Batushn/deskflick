@@ -11,9 +11,16 @@ if ! python3 -c "import evdev" 2>/dev/null; then
     exit 1
 fi
 
-echo ":: Installing binary (sudo needed for /usr/local/bin and udev rule)"
+echo ":: Installing binaries (sudo needed for /usr/local/bin and udev rule)"
 sudo install -Dm755 deskflick.py /usr/local/bin/deskflick
+sudo install -Dm755 deskflick-ui.py /usr/local/bin/deskflick-ui
+sudo install -Dm644 deskflick.desktop /usr/local/share/applications/deskflick.desktop
 sudo install -Dm644 99-deskflick-uinput.rules /etc/udev/rules.d/99-deskflick-uinput.rules
+
+if ! python3 -c "import PySide6" 2>/dev/null; then
+    echo "note: PySide6 not found — the deskflick-ui settings window needs it."
+    echo "  Arch: sudo pacman -S pyside6"
+fi
 sudo udevadm control --reload-rules
 sudo udevadm trigger --name-match=uinput || true
 

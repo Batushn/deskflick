@@ -45,3 +45,12 @@ down  = "Switch One Desktop Down"
 # Examples:
 # up   = "Toggle Overview"
 # down = "cmd:notify-send 'flick!'"
+
+[overview]
+# When enabled, a quick tap of the trigger button toggles KWin's
+# "Present Windows (All desktops)" effect (the Ctrl+F10 one) instead of
+# acting as a normal click. Hold + flick still switches desktops.
+enabled = false
+# KGlobalAccel shortcut invoked by the tap. "ExposeAll" = Present Windows
+# (All desktops); other ideas: "Overview", "Expose" (current desktop only).
+shortcut = "ExposeAll"

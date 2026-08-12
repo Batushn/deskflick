@@ -20,6 +20,10 @@ browser.
   inverted directions, or bind any KWin shortcut / shell command per direction
 - 🪶 **Tiny** — one Python file, one dependency (`python-evdev`), runs as a
   systemd user service
+- 🖱️ **Settings GUI** — `deskflick-ui` (Qt): pick the trigger button (or
+  capture it by pressing it), tune sensitivity, rebind actions
+- 🪟 **Present Windows mode** — optional: a quick tap toggles KWin's
+  *Present Windows (All desktops)* (the Ctrl+F10 effect) instead of clicking
 
 ## Install
 
@@ -42,8 +46,14 @@ An AUR package is planned; the `PKGBUILD` in this repo is ready for it.
 
 ## Configure
 
-Edit `~/.config/deskflick/config.toml` (created on install, fully commented),
-then `systemctl --user restart deskflick`.
+**GUI:** launch **deskflick** from your app menu (or run `deskflick-ui`).
+Pick a trigger button from the list or click *Detect…* and press the mouse
+button you want; adjust sensitivity and per-direction actions; *Save &
+restart service* applies everything. Requires `pyside6`
+(Arch: `sudo pacman -S pyside6`).
+
+**Or by hand:** edit `~/.config/deskflick/config.toml` (created on install,
+fully commented), then `systemctl --user restart deskflick`.
 
 ```toml
 [trigger]
@@ -62,6 +72,10 @@ left  = "Switch One Desktop to the Left"
 right = "Switch One Desktop to the Right"
 up    = "Switch One Desktop Up"
 down  = "Switch One Desktop Down"
+
+[overview]
+enabled = false           # true: a tap toggles Present Windows (All desktops)
+shortcut = "ExposeAll"    # the Ctrl+F10 effect; hold+flick still switches desktops
 ```
 
 List all bindable KWin shortcut names:
