@@ -741,7 +741,11 @@ class Window(QtWidgets.QWidget):
     def _restart_service(self):
         subprocess.run(["systemctl", "--user", "restart", "deskflick"],
                        capture_output=True)
-        QtCore.QTimer.singleShot(1500, self.refresh_status)
+        # Attaching takes a couple of seconds (the uinput clone waits for its
+        # device node), so a single early read reports "no device grabbed"
+        # about a service that is in fact fine. Keep looking until it settles.
+        for delay in (800, 1800, 3000, 4500):
+            QtCore.QTimer.singleShot(delay, self.refresh_status)
 
 
 def main():

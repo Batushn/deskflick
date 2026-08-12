@@ -7,6 +7,10 @@ virtual desktops — or snap the window you're looking at.**
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 [![Wayland & X11](https://img.shields.io/badge/Wayland-%26%20X11-informational?style=flat-square)](#how-it-works)
 
+<p align="center">
+  <img src="docs/demo-desktops.gif" alt="Holding a mouse button and flicking to switch KDE virtual desktops" width="640">
+</p>
+
 Your mouse has a spare button — the "back" thumb button on most mice. deskflick
 turns it into a whole navigation layer:
 
@@ -55,6 +59,8 @@ An AUR package is planned; the `PKGBUILD` in this repo is ready for it.
 
 ## Configure
 
+<img src="docs/demo-settings.gif" alt="The deskflick settings window" width="330" align="right">
+
 **GUI:** launch **deskflick** from the app menu (or run `deskflick-ui`). Pick
 the trigger button from the list or press *Detect…* and press the button
 itself; set what tap, double tap and hold do; bind all eight flick directions,
@@ -63,6 +69,8 @@ the status line names the devices deskflick actually grabbed.
 
 **Or by hand:** `~/.config/deskflick/config.toml`, created on install and fully
 commented. `systemctl --user restart deskflick` to apply.
+
+<br clear="right">
 
 ```toml
 [trigger]
